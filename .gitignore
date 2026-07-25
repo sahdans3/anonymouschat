@@ -1,0 +1,20 @@
+# Python 
+__pycache__/ 
+*.pyc 
+*.pyo 
+*.pyd 
+.Python 
+venv/ 
+.venv/ 
+env/ 
+ENV/ 
+*.db 
+*.sqlite3 
+*.log 
+.env 
+.vscode/ 
+.idea/ 
+.DS_Store 
+Thumbs.db 
+*.zip 
+*.tar.gz 
