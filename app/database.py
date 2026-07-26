@@ -16,8 +16,6 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
     logger.error("❌ DATABASE_URL tidak ditemukan!")
-    logger.info("📋 Pastikan sudah menambahkan PostgreSQL di Railway:")
-    logger.info("   railway add → Database → PostgreSQL")
 else:
     logger.info("✅ DATABASE_URL ditemukan")
 
@@ -48,7 +46,6 @@ def connect_db():
         pool = get_db_pool()
         if pool:
             try:
-                # Hapus parameter timeout
                 return pool.getconn()
             except psycopg2.pool.PoolError:
                 logger.warning("⚠️ Pool exhausted, creating direct connection")
@@ -60,7 +57,7 @@ def connect_db():
         return None
 
 def return_connection(conn):
-    """Return connection to pool or close if pool not available"""
+    """Return connection to pool"""
     if conn:
         try:
             pool = get_db_pool()
@@ -89,13 +86,12 @@ def init_db():
     
     cursor = db.cursor()
     
-    # Users table
+    # Users table (tanpa updated_at)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             searching INT DEFAULT 0,
-            partner_id BIGINT DEFAULT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            partner_id BIGINT DEFAULT NULL
         )
     """)
     
@@ -162,12 +158,7 @@ def register_user(user_id):
         return
     cursor = db.cursor()
     try:
-        cursor.execute("""
-            INSERT INTO users(user_id) 
-            VALUES(%s) 
-            ON CONFLICT (user_id) 
-            DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-        """, (user_id,))
+        cursor.execute("INSERT INTO users(user_id) VALUES(%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
         db.commit()
     except Exception as e:
         logger.error(f"❌ Register user error: {e}")
@@ -184,7 +175,7 @@ def clear_user_status(user_id):
         return
     cursor = db.cursor()
     try:
-        cursor.execute("UPDATE users SET searching=0, partner_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (user_id,))
+        cursor.execute("UPDATE users SET searching=0, partner_id=NULL WHERE user_id=%s", (user_id,))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (user_id,))
         db.commit()
         logger.info(f"✅ Status user {user_id} cleared")
@@ -203,7 +194,7 @@ def set_searching(user_id, status):
         return
     cursor = db.cursor()
     try:
-        cursor.execute("UPDATE users SET searching=%s, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (status, user_id))
+        cursor.execute("UPDATE users SET searching=%s WHERE user_id=%s", (status, user_id))
         db.commit()
     except Exception as e:
         logger.error(f"❌ Set searching error: {e}")
@@ -238,12 +229,10 @@ def join_queue(user_id):
         return
     cursor = db.cursor()
     try:
-        # Cek apakah user sudah di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if cursor.fetchone():
             return
         
-        # Cek apakah user sedang dalam chat
         cursor.execute("SELECT partner_id FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         if result and result[0] is not None:
@@ -292,7 +281,6 @@ def find_partner(user_id):
     try:
         cursor.execute("BEGIN")
         
-        # Cek apakah user sedang dalam chat
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         user_check = cursor.fetchone()
         
@@ -301,7 +289,6 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return None
         
-        # Cari partner di queue
         cursor.execute("""
             SELECT wq.user_id, u.searching
             FROM waiting_queue wq
@@ -309,7 +296,7 @@ def find_partner(user_id):
             WHERE wq.user_id <> %s
                 AND (u.partner_id IS NULL OR u.partner_id = 0)
                 AND u.searching = 1
-            ORDER BY wq.created_at ASC, random()
+            ORDER BY wq.created_at ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         """, (user_id,))
@@ -324,7 +311,6 @@ def find_partner(user_id):
         partner_id = partner[0]
         logger.info(f"🔍 Found potential partner: {partner_id}")
         
-        # Lock partner row
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
         partner_check = cursor.fetchone()
         
@@ -334,11 +320,8 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return None
         
-        # Update kedua user
-        cursor.execute("UPDATE users SET partner_id=%s, searching=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (partner_id, user_id))
-        cursor.execute("UPDATE users SET partner_id=%s, searching=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (user_id, partner_id))
-        
-        # Hapus dari queue
+        cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
+        cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         cursor.execute("COMMIT")
@@ -357,7 +340,6 @@ def find_partner(user_id):
         return_connection(db)
 
 def stop_chat(user_id):
-    """Stop chat with locking to prevent race conditions"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -367,20 +349,16 @@ def stop_chat(user_id):
     try:
         cursor.execute("BEGIN")
         
-        # Lock user row
         cursor.execute("SELECT partner_id FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         result = cursor.fetchone()
         partner_id = result[0] if result else None
         
-        # Update user
-        cursor.execute("UPDATE users SET partner_id=NULL, searching=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (user_id,))
+        cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (user_id,))
         
-        # Update partner jika ada
         if partner_id:
             cursor.execute("SELECT partner_id FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
-            cursor.execute("UPDATE users SET partner_id=NULL, searching=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (partner_id,))
+            cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (partner_id,))
         
-        # Hapus dari queue
         leave_queue(user_id)
         if partner_id:
             leave_queue(partner_id)
