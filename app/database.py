@@ -16,6 +16,8 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
     logger.error("❌ DATABASE_URL tidak ditemukan!")
+    logger.info("📋 Pastikan sudah menambahkan PostgreSQL di Railway:")
+    logger.info("   railway add → Database → PostgreSQL")
 else:
     logger.info("✅ DATABASE_URL ditemukan")
 
@@ -29,7 +31,7 @@ def get_db_pool():
         try:
             db_pool = psycopg2.pool.SimpleConnectionPool(
                 minconn=1,
-                maxconn=5,
+                maxconn=10,
                 dsn=DATABASE_URL
             )
             logger.info("✅ Database connection pool created")
@@ -39,17 +41,38 @@ def get_db_pool():
     return db_pool
 
 def connect_db():
+    """Get connection from pool with timeout"""
     if not DATABASE_URL:
         return None
     try:
         pool = get_db_pool()
         if pool:
-            return pool.getconn()
+            try:
+                return pool.getconn(timeout=5)
+            except psycopg2.pool.PoolError:
+                logger.warning("⚠️ Pool exhausted, creating direct connection")
+                return psycopg2.connect(DATABASE_URL)
         else:
             return psycopg2.connect(DATABASE_URL)
     except Exception as e:
         logger.error(f"⚠️ Database connection error: {e}")
         return None
+
+def return_connection(conn):
+    """Return connection to pool or close if pool not available"""
+    if conn:
+        try:
+            pool = get_db_pool()
+            if pool:
+                pool.putconn(conn)
+            else:
+                conn.close()
+        except Exception as e:
+            logger.error(f"⚠️ Error returning connection: {e}")
+            try:
+                conn.close()
+            except:
+                pass
 
 # ================= CREATE TABLES =================
 
@@ -96,7 +119,7 @@ def init_db():
     
     db.commit()
     cursor.close()
-    db.close()
+    return_connection(db)
     logger.info("✅ Database tables created")
 
 # ================= KEEP ALIVE =================
@@ -111,7 +134,7 @@ def keep_alive():
                     cursor.execute("SELECT 1")
                     cursor.fetchall()
                     cursor.close()
-                    db.close()
+                    return_connection(db)
                     logger.info("✅ Database ping successful")
         except Exception as e:
             logger.error(f"❌ Database ping failed: {e}")
@@ -137,15 +160,20 @@ def register_user(user_id):
     if not db:
         return
     cursor = db.cursor()
-    cursor.execute("""
-        INSERT INTO users(user_id) 
-        VALUES(%s) 
-        ON CONFLICT (user_id) 
-        DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-    """, (user_id,))
-    db.commit()
-    cursor.close()
-    db.close()
+    try:
+        cursor.execute("""
+            INSERT INTO users(user_id) 
+            VALUES(%s) 
+            ON CONFLICT (user_id) 
+            DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+        """, (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Register user error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
 
 def clear_user_status(user_id):
     if not DATABASE_URL:
@@ -164,7 +192,7 @@ def clear_user_status(user_id):
         db.rollback()
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def set_searching(user_id, status):
     if not DATABASE_URL:
@@ -173,10 +201,15 @@ def set_searching(user_id, status):
     if not db:
         return
     cursor = db.cursor()
-    cursor.execute("UPDATE users SET searching=%s, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (status, user_id))
-    db.commit()
-    cursor.close()
-    db.close()
+    try:
+        cursor.execute("UPDATE users SET searching=%s, updated_at=CURRENT_TIMESTAMP WHERE user_id=%s", (status, user_id))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Set searching error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
 
 def is_searching(user_id):
     if not DATABASE_URL:
@@ -185,11 +218,16 @@ def is_searching(user_id):
     if not db:
         return False
     cursor = db.cursor()
-    cursor.execute("SELECT searching FROM users WHERE user_id=%s", (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    db.close()
-    return result and result[0] == 1
+    try:
+        cursor.execute("SELECT searching FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result and result[0] == 1
+    except Exception as e:
+        logger.error(f"❌ Is searching error: {e}")
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
 
 def join_queue(user_id):
     if not DATABASE_URL:
@@ -202,16 +240,12 @@ def join_queue(user_id):
         # Cek apakah user sudah di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if cursor.fetchone():
-            cursor.close()
-            db.close()
             return
         
         # Cek apakah user sedang dalam chat
         cursor.execute("SELECT partner_id FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         if result and result[0] is not None:
-            cursor.close()
-            db.close()
             return
         
         cursor.execute("INSERT INTO waiting_queue(user_id) VALUES(%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
@@ -222,7 +256,7 @@ def join_queue(user_id):
         db.rollback()
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def leave_queue(user_id):
     if not DATABASE_URL:
@@ -231,10 +265,15 @@ def leave_queue(user_id):
     if not db:
         return
     cursor = db.cursor()
-    cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (user_id,))
-    db.commit()
-    cursor.close()
-    db.close()
+    try:
+        cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Leave queue error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
 
 def find_partner(user_id):
     """Find partner with robust locking and retry mechanism"""
@@ -261,7 +300,7 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return None
         
-        # Cari partner di queue (dengan random offset untuk menghindari race condition)
+        # Cari partner di queue
         cursor.execute("""
             SELECT wq.user_id, u.searching
             FROM waiting_queue wq
@@ -314,7 +353,7 @@ def find_partner(user_id):
         return None
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def stop_chat(user_id):
     """Stop chat with locking to prevent race conditions"""
@@ -358,7 +397,7 @@ def stop_chat(user_id):
         return None
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def get_partner(user_id):
     if not DATABASE_URL:
@@ -385,7 +424,7 @@ def get_partner(user_id):
         return None
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def remove_user(user_id):
     if not DATABASE_URL:
@@ -404,7 +443,7 @@ def remove_user(user_id):
         db.rollback()
     finally:
         cursor.close()
-        db.close()
+        return_connection(db)
 
 def get_user_status(user_id):
     if not DATABASE_URL:
@@ -413,11 +452,16 @@ def get_user_status(user_id):
     if not db:
         return None
     cursor = db.cursor()
-    cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    db.close()
-    return result
+    try:
+        cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result
+    except Exception as e:
+        logger.error(f"❌ Get user status error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
 
 def save_feedback(from_user, to_user, feedback):
     if not DATABASE_URL:
@@ -426,7 +470,12 @@ def save_feedback(from_user, to_user, feedback):
     if not db:
         return
     cursor = db.cursor()
-    cursor.execute("INSERT INTO feedback(from_user, to_user, feedback) VALUES(%s, %s, %s)", (from_user, to_user, feedback))
-    db.commit()
-    cursor.close()
-    db.close()
+    try:
+        cursor.execute("INSERT INTO feedback(from_user, to_user, feedback) VALUES(%s, %s, %s)", (from_user, to_user, feedback))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Save feedback error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
