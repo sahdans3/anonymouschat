@@ -41,14 +41,15 @@ def get_db_pool():
     return db_pool
 
 def connect_db():
-    """Get connection from pool with timeout"""
+    """Get connection from pool"""
     if not DATABASE_URL:
         return None
     try:
         pool = get_db_pool()
         if pool:
             try:
-                return pool.getconn(timeout=5)
+                # Hapus parameter timeout
+                return pool.getconn()
             except psycopg2.pool.PoolError:
                 logger.warning("⚠️ Pool exhausted, creating direct connection")
                 return psycopg2.connect(DATABASE_URL)
