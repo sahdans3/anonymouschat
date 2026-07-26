@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import Forbidden, BadRequest, TelegramError
 import asyncio
 import io
+import random
 
 from app.database import (
     register_user,
@@ -55,14 +56,16 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Cari partner dengan retry (10 kali percobaan dengan delay 1 detik)
+    # Cari partner dengan retry (10 kali, delay random)
     partner = None
     for attempt in range(10):
         partner = find_partner(user_id)
         if partner:
             break
-        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id}")
-        await asyncio.sleep(1)
+        # Delay random antara 0.5-2 detik
+        delay = random.uniform(0.5, 2.0)
+        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id} (delay: {delay:.2f}s)")
+        await asyncio.sleep(delay)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -70,7 +73,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
     await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-
 # ================= NEXT =================
 
 async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,14 +108,16 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Cari partner dengan retry (10 kali percobaan dengan delay 1 detik)
+    # Cari partner dengan retry (10 kali, delay random)
     partner = None
     for attempt in range(10):
         partner = find_partner(user_id)
         if partner:
             break
-        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id}")
-        await asyncio.sleep(1)
+        # Delay random antara 0.5-2 detik untuk menghindari race condition
+        delay = random.uniform(0.5, 2.0)
+        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id} (delay: {delay:.2f}s)")
+        await asyncio.sleep(delay)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
