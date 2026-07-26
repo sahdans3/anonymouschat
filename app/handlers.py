@@ -53,19 +53,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💬 You are already chatting.\nUse /next or /stop.")
         return
     
+    # Set searching dan join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Cari partner dengan retry (10 kali, delay random)
-    partner = None
-    for attempt in range(10):
-        partner = find_partner(user_id)
-        if partner:
-            break
-        # Delay random antara 0.5-2 detik
-        delay = random.uniform(0.5, 2.0)
-        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id} (delay: {delay:.2f}s)")
-        await asyncio.sleep(delay)
+    # LANGSUNG cari partner (tanpa delay)
+    partner = find_partner(user_id)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -84,7 +77,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Dapatkan partner lama
     old_partner = get_partner(user_id)
     
-    # Stop chat dengan lock
+    # Stop chat
     stop_chat(user_id)
     clear_user_status(user_id)
     
@@ -101,23 +94,12 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Tunggu agar database sinkron
-    await asyncio.sleep(0.5)
-    
-    # Set searching
+    # LANGSUNG set searching dan cari partner (tanpa delay)
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Cari partner dengan retry (10 kali, delay random)
-    partner = None
-    for attempt in range(10):
-        partner = find_partner(user_id)
-        if partner:
-            break
-        # Delay random antara 0.5-2 detik untuk menghindari race condition
-        delay = random.uniform(0.5, 2.0)
-        print(f"🔄 Attempt {attempt+1}/10: Waiting for partner for user {user_id} (delay: {delay:.2f}s)")
-        await asyncio.sleep(delay)
+    # LANGSUNG cari partner (tanpa delay)
+    partner = find_partner(user_id)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")

@@ -266,7 +266,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner with robust locking and retry mechanism"""
+    """Find partner instantly - optimized for speed"""
     if not DATABASE_URL:
         logger.warning(f"⚠️ No DATABASE_URL for user {user_id}")
         return None
@@ -281,6 +281,7 @@ def find_partner(user_id):
     try:
         cursor.execute("BEGIN")
         
+        # Cek apakah user sedang dalam chat
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         user_check = cursor.fetchone()
         
@@ -289,8 +290,9 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return None
         
+        # Cari partner di queue - OPTIMASI: langsung ambil yang pertama
         cursor.execute("""
-            SELECT wq.user_id, u.searching
+            SELECT wq.user_id
             FROM waiting_queue wq
             JOIN users u ON u.user_id = wq.user_id
             WHERE wq.user_id <> %s
@@ -309,27 +311,29 @@ def find_partner(user_id):
             return None
         
         partner_id = partner[0]
-        logger.info(f"🔍 Found potential partner: {partner_id}")
+        logger.info(f"🔍 Found partner: {partner_id}")
         
+        # Lock partner row
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
         partner_check = cursor.fetchone()
         
         if partner_check and partner_check[0] is not None:
-            logger.info(f"ℹ️ Partner {partner_id} already in chat, cleaning up...")
+            logger.info(f"ℹ️ Partner {partner_id} already in chat")
             leave_queue(partner_id)
             cursor.execute("COMMIT")
             return None
         
+        # Update kedua user
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         cursor.execute("COMMIT")
-        logger.info(f"✅ Partner found: {user_id} <-> {partner_id}")
+        logger.info(f"✅ Partner found instantly: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
-        logger.error(f"❌ Find partner error for user {user_id}: {e}")
+        logger.error(f"❌ Find partner error: {e}")
         try:
             cursor.execute("ROLLBACK")
         except:
