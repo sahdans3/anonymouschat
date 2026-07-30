@@ -4,7 +4,6 @@ import psycopg2.pool
 import threading
 import time
 import logging
-import random
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +38,6 @@ def get_db_pool():
     return db_pool
 
 def connect_db():
-    """Get connection from pool"""
     if not DATABASE_URL:
         return None
     try:
@@ -57,7 +55,6 @@ def connect_db():
         return None
 
 def return_connection(conn):
-    """Return connection to pool"""
     if conn:
         try:
             pool = get_db_pool()
@@ -86,12 +83,17 @@ def init_db():
     
     cursor = db.cursor()
     
-    # Users table (tanpa updated_at)
+    # Users table with gender and premium columns
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             searching INT DEFAULT 0,
-            partner_id BIGINT DEFAULT NULL
+            partner_id BIGINT DEFAULT NULL,
+            gender VARCHAR(10) DEFAULT NULL,
+            preferred_gender VARCHAR(10) DEFAULT NULL,
+            premium INT DEFAULT 0,
+            premium_expiry TIMESTAMP DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -105,12 +107,14 @@ def init_db():
         )
     """)
     
-    # Waiting queue table
+    # Waiting queue table with gender info
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS waiting_queue (
             id SERIAL PRIMARY KEY,
             user_id BIGINT UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            gender VARCHAR(10) DEFAULT NULL,
+            preferred_gender VARCHAR(10) DEFAULT NULL
         )
     """)
     
@@ -148,6 +152,153 @@ def start_keep_alive():
     except Exception as e:
         logger.error(f"⚠️ Failed to start keep-alive: {e}")
 
+# ================= PREMIUM FUNCTIONS =================
+
+def check_premium(user_id):
+    """Check if user has premium access"""
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT premium, premium_expiry 
+            FROM users 
+            WHERE user_id=%s
+        """, (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            return False
+        premium, expiry = result
+        if premium == 1:
+            if expiry:
+                cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (expiry,))
+                is_valid = cursor.fetchone()[0]
+                if not is_valid:
+                    cursor.execute("UPDATE users SET premium=0 WHERE user_id=%s", (user_id,))
+                    db.commit()
+                    return False
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"❌ Check premium error: {e}")
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_premium(user_id, days=30):
+    """Set user as premium for X days"""
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            UPDATE users 
+            SET premium=1, 
+                premium_expiry=CURRENT_TIMESTAMP + INTERVAL '%s days'
+            WHERE user_id=%s
+        """, (days, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set as premium for {days} days")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set premium error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_gender(user_id, gender):
+    """Set user's gender"""
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET gender=%s WHERE user_id=%s", (gender, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set gender to {gender}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set gender error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_preferred_gender(user_id, gender):
+    """Set user's preferred gender for partner"""
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET preferred_gender=%s WHERE user_id=%s", (gender, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set preferred gender to {gender}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set preferred gender error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_user_gender(user_id):
+    """Get user's gender and preferred gender"""
+    if not DATABASE_URL:
+        return None, None
+    db = connect_db()
+    if not db:
+        return None, None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT gender, preferred_gender FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0], result[1]
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ Get user gender error: {e}")
+        return None, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_premium_status(user_id):
+    """Get user's premium status and expiry"""
+    if not DATABASE_URL:
+        return False, None
+    db = connect_db()
+    if not db:
+        return False, None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0] == 1, result[1]
+        return False, None
+    except Exception as e:
+        logger.error(f"❌ Get premium status error: {e}")
+        return False, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
 # ================= USER FUNCTIONS =================
 
 def register_user(user_id):
@@ -158,7 +309,12 @@ def register_user(user_id):
         return
     cursor = db.cursor()
     try:
-        cursor.execute("INSERT INTO users(user_id) VALUES(%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
+        cursor.execute("""
+            INSERT INTO users(user_id) 
+            VALUES(%s) 
+            ON CONFLICT (user_id) 
+            DO NOTHING
+        """, (user_id,))
         db.commit()
     except Exception as e:
         logger.error(f"❌ Register user error: {e}")
@@ -229,6 +385,12 @@ def join_queue(user_id):
         return
     cursor = db.cursor()
     try:
+        # Get user gender and preferences
+        cursor.execute("SELECT gender, preferred_gender FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        gender = result[0] if result else None
+        preferred_gender = result[1] if result else None
+        
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if cursor.fetchone():
             return
@@ -238,9 +400,13 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
-        cursor.execute("INSERT INTO waiting_queue(user_id) VALUES(%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
+        cursor.execute("""
+            INSERT INTO waiting_queue(user_id, gender, preferred_gender) 
+            VALUES(%s, %s, %s) 
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id, gender, preferred_gender))
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue")
+        logger.info(f"✅ User {user_id} joined queue (gender: {gender}, prefers: {preferred_gender})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -266,14 +432,12 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner instantly - optimized for speed"""
+    """Find partner with gender filtering for premium users"""
     if not DATABASE_URL:
-        logger.warning(f"⚠️ No DATABASE_URL for user {user_id}")
         return None
     
     db = connect_db()
     if not db:
-        logger.error(f"❌ Cannot connect to database for user {user_id}")
         return None
     
     cursor = db.cursor()
@@ -281,55 +445,81 @@ def find_partner(user_id):
     try:
         cursor.execute("BEGIN")
         
-        # Cek apakah user sedang dalam chat
+        # Check if user is already in chat
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         user_check = cursor.fetchone()
-        
         if user_check and user_check[0] is not None:
-            logger.info(f"ℹ️ User {user_id} already in chat")
             cursor.execute("COMMIT")
             return None
         
-        # Cari partner di queue - OPTIMASI: langsung ambil yang pertama
-        cursor.execute("""
-            SELECT wq.user_id
-            FROM waiting_queue wq
-            JOIN users u ON u.user_id = wq.user_id
-            WHERE wq.user_id <> %s
-                AND (u.partner_id IS NULL OR u.partner_id = 0)
-                AND u.searching = 1
-            ORDER BY wq.created_at ASC
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        """, (user_id,))
+        # Get user gender, preferred gender, and premium status
+        cursor.execute("SELECT gender, preferred_gender, premium FROM users WHERE user_id=%s", (user_id,))
+        user_info = cursor.fetchone()
+        user_gender = user_info[0] if user_info else None
+        user_preferred = user_info[1] if user_info else None
+        is_premium = user_info[2] == 1 if user_info else False
         
+        # Build query based on premium status
+        if is_premium and user_preferred and user_gender:
+            # Premium: can filter by preferred gender
+            query = """
+                SELECT wq.user_id
+                FROM waiting_queue wq
+                JOIN users u ON u.user_id = wq.user_id
+                WHERE wq.user_id <> %s
+                    AND (u.partner_id IS NULL OR u.partner_id = 0)
+                    AND u.searching = 1
+                    AND u.gender = %s
+                    AND wq.user_id NOT IN (
+                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
+                    )
+                ORDER BY wq.created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """
+            params = (user_id, user_preferred)
+        else:
+            # Free: any gender
+            query = """
+                SELECT wq.user_id
+                FROM waiting_queue wq
+                JOIN users u ON u.user_id = wq.user_id
+                WHERE wq.user_id <> %s
+                    AND (u.partner_id IS NULL OR u.partner_id = 0)
+                    AND u.searching = 1
+                    AND wq.user_id NOT IN (
+                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
+                    )
+                ORDER BY wq.created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """
+            params = (user_id,)
+        
+        cursor.execute(query, params)
         partner = cursor.fetchone()
         
         if not partner:
-            logger.info(f"ℹ️ No partner in queue for user {user_id}")
             cursor.execute("COMMIT")
             return None
         
         partner_id = partner[0]
-        logger.info(f"🔍 Found partner: {partner_id}")
         
         # Lock partner row
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
         partner_check = cursor.fetchone()
-        
         if partner_check and partner_check[0] is not None:
-            logger.info(f"ℹ️ Partner {partner_id} already in chat")
             leave_queue(partner_id)
             cursor.execute("COMMIT")
             return None
         
-        # Update kedua user
+        # Update both users
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         cursor.execute("COMMIT")
-        logger.info(f"✅ Partner found instantly: {user_id} <-> {partner_id}")
+        logger.info(f"✅ Partner found: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
@@ -352,13 +542,11 @@ def stop_chat(user_id):
     cursor = db.cursor()
     try:
         cursor.execute("BEGIN")
-        
         cursor.execute("SELECT partner_id FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         result = cursor.fetchone()
         partner_id = result[0] if result else None
         
         cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (user_id,))
-        
         if partner_id:
             cursor.execute("SELECT partner_id FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
             cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (partner_id,))

@@ -20,7 +20,11 @@ from app.handlers import (
     button_handler,
     message_handler,
     media_handler,
-    error_handler
+    error_handler,
+    premium,
+    setgender,
+    setpref,
+    myprofile
 )
 
 # Flask app untuk health check
@@ -39,7 +43,6 @@ def run_health_server():
         print(f"⚠️ Health server error: {e}")
 
 def run_bot():
-    """Run the bot in a separate thread"""
     if not BOT_TOKEN:
         print("❌ Error: BOT_TOKEN tidak ditemukan")
         return
@@ -58,6 +61,12 @@ def run_bot():
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop))
+    
+    # Premium handlers
+    app.add_handler(CommandHandler("premium", premium))
+    app.add_handler(CommandHandler("setgender", setgender))
+    app.add_handler(CommandHandler("setpref", setpref))
+    app.add_handler(CommandHandler("myprofile", myprofile))
 
     # Button handler
     app.add_handler(CallbackQueryHandler(button_handler))
