@@ -50,7 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Type /premium to see premium features.\n"
             "Type /myprofile to see your profile.",
             parse_mode='Markdown'
-        )
+        )  # <-- Pastikan ada kurung tutup di sini
     except TelegramError as e:
         print(e)
 
