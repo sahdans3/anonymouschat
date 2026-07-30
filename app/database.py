@@ -406,15 +406,15 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
-        # Hanya premium user yang bisa filter gender
-        # Free user tidak punya preferred_gender (di-set NULL)
-        if is_premium == 1:
+        # Premium user bisa filter gender, free user tidak
+        if is_premium == 1 and preferred_gender and preferred_gender != 'any':
             cursor.execute("""
                 INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
                 VALUES(%s, %s, %s, CURRENT_TIMESTAMP)
                 ON CONFLICT (user_id) DO NOTHING
             """, (user_id, gender, preferred_gender))
         else:
+            # Free user atau preferensi 'any': tidak ada filter gender
             cursor.execute("""
                 INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
                 VALUES(%s, %s, NULL, CURRENT_TIMESTAMP)
@@ -422,7 +422,7 @@ def join_queue(user_id):
             """, (user_id, gender))
         
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
+        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender}, preferred: {preferred_gender if is_premium else 'any'})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -501,8 +501,9 @@ def find_partner(user_id):
             return partner_id
         
         # SECOND: Find partner from queue
-        # Jika user premium dan punya preferred_gender, cari yang cocok
+        # Jika user premium dan punya preferred_gender dan preferred_gender != 'any'
         if is_premium and user_preferred and user_preferred != 'any':
+            # Cari partner dengan gender yang sesuai dengan preferred_gender
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
@@ -521,7 +522,7 @@ def find_partner(user_id):
             """
             params = (user_id, user_preferred)
         else:
-            # Free user atau tidak ada preferensi: cari siapa saja
+            # Free user atau tidak ada preferensi: cari siapa saja (termasuk gender yang sama)
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
