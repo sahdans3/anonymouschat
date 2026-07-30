@@ -470,10 +470,10 @@ def find_partner(user_id):
         user_info = cursor.fetchone()
         user_gender = user_info[0] if user_info else None
         user_preferred = user_info[1] if user_info else None
-        is_premium = user_info[2] == 1 if user_info else False  # Konversi ke boolean Python
+        is_premium = user_info[2] == 1 if user_info else False
         
         # FIRST: Try to find instant match (user searching but not in queue)
-        # PERBAIKAN: Hanya premium = 1 atau premium = 0, tanpa boolean
+        # HAPUS kondisi premium = 0 agar semua user bisa bertemu
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -497,6 +497,7 @@ def find_partner(user_id):
             return partner_id
         
         # SECOND: Try to find partner from queue
+        # HAPUS kondisi premium = 0 agar semua user bisa bertemu
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
