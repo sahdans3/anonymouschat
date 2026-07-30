@@ -460,6 +460,7 @@ def find_partner(user_id):
         is_premium = user_info[2] == 1 if user_info else False
         
         # First: Try to find instant match (user who is searching but not in queue)
+        # PERBAIKAN: Gunakan premium = 0 saja, tanpa boolean
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -467,10 +468,10 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
-                AND (premium = 0 OR premium = %s)
+                AND premium = 0
             LIMIT 1
             FOR UPDATE SKIP LOCKED
-        """, (user_id, is_premium))
+        """, (user_id,))
         
         instant_partner = cursor.fetchone()
         
@@ -478,7 +479,6 @@ def find_partner(user_id):
             partner_id = instant_partner[0]
             logger.info(f"⚡ Instant match found: {user_id} <-> {partner_id}")
             
-            # Update langsung tanpa queue
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
             cursor.execute("COMMIT")
@@ -494,6 +494,7 @@ def find_partner(user_id):
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
                     AND u.gender = %s
+                    AND u.premium = 0
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
@@ -510,6 +511,7 @@ def find_partner(user_id):
                 WHERE wq.user_id <> %s
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
+                    AND u.premium = 0
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
