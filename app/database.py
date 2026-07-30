@@ -393,7 +393,8 @@ def join_queue(user_id):
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
-        is_premium = result[2] == 1 if result else False  # Konversi ke boolean Python
+        # Konversi premium ke integer (1 atau 0)
+        is_premium = 1 if result and result[2] == 1 else 0
         
         # Cek apakah user sudah di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
@@ -406,8 +407,7 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
-        # PERBAIKAN: Gunakan integer untuk premium (1 atau 0)
-        # Premium user dapat prioritas (created_at + 0.1 detik lebih awal)
+        # PERBAIKAN: is_premium sudah integer (1 atau 0)
         cursor.execute("""
             INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
             VALUES(%s, %s, %s, 
@@ -417,7 +417,7 @@ def join_queue(user_id):
                 END
             )
             ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, gender, preferred_gender, is_premium))  # is_premium adalah 1 atau 0
+        """, (user_id, gender, preferred_gender, is_premium))
         db.commit()
         logger.info(f"✅ User {user_id} joined queue (premium: {is_premium})")
     except Exception as e:
