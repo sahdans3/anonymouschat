@@ -257,7 +257,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 INSTAN - langsung cari partner (tanpa loop)
+    # 🔥 INSTAN - langsung cari partner
     partner = find_partner(user_id)
     
     if partner is None:
