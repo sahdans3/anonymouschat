@@ -257,8 +257,13 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 PASTIKAN: Cari partner setelah join queue
-    partner = find_partner(user_id)
+    # 🔥 Cari partner - coba 5 kali dengan delay kecil
+    partner = None
+    for attempt in range(5):
+        partner = find_partner(user_id)
+        if partner:
+            break
+        await asyncio.sleep(0.2)  # 200ms delay antar percobaan
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")

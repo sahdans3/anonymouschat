@@ -473,7 +473,7 @@ def find_partner(user_id):
         user_preferred = user_info[1] if user_info else None
         is_premium = user_info[2] == 1 if user_info else False
         
-        # FIRST: Try to find instant match
+        # 🔥 FIRST: Try to find instant match (user searching but not in queue)
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -496,17 +496,8 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return partner_id
         
-        # SECOND: Try to find partner from queue
-        # 🔥 TAMBAHKAN: Cek jumlah user di queue
-        cursor.execute("SELECT COUNT(*) FROM waiting_queue")
-        queue_count = cursor.fetchone()[0]
-        logger.info(f"📊 Queue count: {queue_count}")
-        
-        # 🔥 TAMBAHKAN: Lihat isi queue
-        cursor.execute("SELECT user_id FROM waiting_queue ORDER BY created_at ASC")
-        queue_users = cursor.fetchall()
-        logger.info(f"📋 Queue users: {[u[0] for u in queue_users]}")
-        
+        # 🔥 SECOND: Find partner from queue - FIXED
+        # Cari user di queue yang paling lama menunggu
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
