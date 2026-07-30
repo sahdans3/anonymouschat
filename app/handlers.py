@@ -50,7 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Type /premium to see premium features.\n"
             "Type /myprofile to see your profile.",
             parse_mode='Markdown'
-        )  # <-- Pastikan ada kurung tutup di sini
+        )
     except TelegramError as e:
         print(e)
 
@@ -116,7 +116,7 @@ async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = "✅ *Active*" if is_premium else "❌ *Inactive*"
     expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
     
-    await update.message.reply_text(
+    premium_text = (
         f"🌟 *Premium Features*\n\n"
         f"Status: {status}{expiry_text}\n\n"
         "*Premium Benefits:*\n"
@@ -124,7 +124,11 @@ async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔝 Priority matching\n"
         "💬 Unlimited chat history\n"
         "📊 See who liked you\n\n"
-        "*Choose a plan:*",
+        "*Choose a plan:*"
+    )
+    
+    await update.message.reply_text(
+        premium_text,
         parse_mode='Markdown',
         reply_markup=premium_keyboard()
     )
@@ -153,8 +157,7 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Type *male* or *female* - Set your gender\n"
         "/setpref male/female/any - Set preferred gender (premium)\n"
         "/premium - Buy premium\n"
-        "/search - Find partner",
-        parse_mode='Markdown'
+        "/search - Find partner"
     )
     
     await update.message.reply_text(profile_text, parse_mode='Markdown')
@@ -171,15 +174,16 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         star_balance = await context.bot.get_my_star_balance()
         
-        await update.message.reply_text(
+        balance_text = (
             f"⭐ *Saldo Stars Bot*\n\n"
             f"Total Stars: *{star_balance}* ⭐\n\n"
             f"💡 1 Star ≈ $0.013 (nilai setelah biaya)\n"
             f"📤 Minimal withdraw: 1000 Stars\n"
             f"⏳ Masa tunggu withdraw: 21 hari\n\n"
-            f"🔗 Tarik di: https://fragment.com",
-            parse_mode='Markdown'
+            f"🔗 Tarik di: https://fragment.com"
         )
+        
+        await update.message.reply_text(balance_text, parse_mode='Markdown')
     except Exception as e:
         print(f"❌ Balance error: {e}")
         await update.message.reply_text(
