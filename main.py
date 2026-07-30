@@ -22,9 +22,9 @@ from app.handlers import (
     media_handler,
     error_handler,
     premium,
-    setgender,
     setpref,
-    myprofile
+    myprofile,
+    balance
 )
 
 # Flask app untuk health check
@@ -64,9 +64,11 @@ def run_bot():
     
     # Premium handlers
     app.add_handler(CommandHandler("premium", premium))
-    app.add_handler(CommandHandler("setgender", setgender))
     app.add_handler(CommandHandler("setpref", setpref))
     app.add_handler(CommandHandler("myprofile", myprofile))
+    
+    # Balance handler
+    app.add_handler(CommandHandler("balance", balance))
 
     # Button handler
     app.add_handler(CallbackQueryHandler(button_handler))
