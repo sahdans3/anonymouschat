@@ -432,7 +432,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner with instant matching and queue fallback"""
+    """Find partner with instant matching - NO DELAY"""
     if not DATABASE_URL:
         return None
     
@@ -452,15 +452,14 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return None
         
-        # Get user gender, preferred gender, and premium status
+        # Get user gender and premium status
         cursor.execute("SELECT gender, preferred_gender, premium FROM users WHERE user_id=%s", (user_id,))
         user_info = cursor.fetchone()
         user_gender = user_info[0] if user_info else None
         user_preferred = user_info[1] if user_info else None
         is_premium = user_info[2] == 1 if user_info else False
         
-        # First: Try to find instant match (user who is searching but not in queue)
-        # PERBAIKAN: Gunakan premium = 0 saja, tanpa boolean
+        # FIRST: Try to find instant match (user searching but not in queue)
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -468,7 +467,6 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
-                AND premium = 0
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         """, (user_id,))
@@ -477,14 +475,14 @@ def find_partner(user_id):
         
         if instant_partner:
             partner_id = instant_partner[0]
-            logger.info(f"⚡ Instant match found: {user_id} <-> {partner_id}")
+            logger.info(f"⚡ INSTANT MATCH: {user_id} <-> {partner_id}")
             
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
             cursor.execute("COMMIT")
             return partner_id
         
-        # Second: Try to find partner from queue with gender preference (if premium)
+        # SECOND: Try to find partner from queue
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
@@ -494,7 +492,6 @@ def find_partner(user_id):
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
                     AND u.gender = %s
-                    AND u.premium = 0
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
@@ -511,7 +508,6 @@ def find_partner(user_id):
                 WHERE wq.user_id <> %s
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
-                    AND u.premium = 0
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
@@ -544,7 +540,7 @@ def find_partner(user_id):
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         cursor.execute("COMMIT")
-        logger.info(f"✅ Partner found: {user_id} <-> {partner_id}")
+        logger.info(f"✅ Partner found from queue: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:

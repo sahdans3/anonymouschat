@@ -3,8 +3,6 @@ from telegram.ext import ContextTypes
 from telegram.error import Forbidden, BadRequest, TelegramError
 import asyncio
 import io
-import time
-import random
 
 from app.database import (
     register_user,
@@ -215,19 +213,16 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # LANGSUNG cari partner (tanpa delay)
     set_searching(user_id, 1)
     
-    # Try instant match first
+    # Coba instant match
     partner = find_partner(user_id)
     
+    # Jika tidak ada, masuk queue dan coba lagi (SEKALI)
     if partner is None:
         join_queue(user_id)
-        # Quick retry
-        for attempt in range(5):
-            partner = find_partner(user_id)
-            if partner:
-                break
-            await asyncio.sleep(0.2)
+        partner = find_partner(user_id)  # Langsung coba, tanpa loop
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -259,19 +254,16 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
+    # LANGSUNG cari partner (tanpa delay)
     set_searching(user_id, 1)
     
-    # Try instant match first
+    # Coba instant match
     partner = find_partner(user_id)
     
+    # Jika tidak ada, masuk queue dan coba lagi (SEKALI)
     if partner is None:
         join_queue(user_id)
-        # Quick retry
-        for attempt in range(5):
-            partner = find_partner(user_id)
-            if partner:
-                break
-            await asyncio.sleep(0.2)
+        partner = find_partner(user_id)  # Langsung coba, tanpa loop
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
