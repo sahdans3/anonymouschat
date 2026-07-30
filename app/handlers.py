@@ -189,6 +189,41 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Pastikan bot sudah terintegrasi dengan Telegram Stars."
         )
 
+# ================= WAIT FOR PARTNER (BACKGROUND TASK) =================
+
+async def wait_for_partner(user_id, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Background task to wait for partner"""
+    partner = None
+    attempts = 0
+    while partner is None:
+        partner = find_partner(user_id)
+        if partner:
+            break
+        attempts += 1
+        if attempts > 20:  # 10 detik timeout (20 x 0.5)
+            # Kirim pesan bahwa masih mencari
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="⏳ Still searching... We'll notify you when a partner is found.\n"
+                     "You can use /stop to cancel."
+            )
+            # Reset attempts agar tidak spam
+            attempts = 0
+        await asyncio.sleep(0.5)
+        # Cek apakah user masih searching
+        if not is_searching(user_id):
+            return
+    
+    if partner:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=PARTNER_FOUND_MESSAGE
+        )
+        await context.bot.send_message(
+            chat_id=partner,
+            text=PARTNER_FOUND_MESSAGE
+        )
+
 # ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -216,11 +251,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 LANGSUNG cari partner setelah join queue
+    # 🔥 Cari partner langsung
     partner = find_partner(user_id)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
+        # Jalankan background task untuk menunggu partner
+        asyncio.create_task(wait_for_partner(user_id, update, context))
         return
     
     await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
@@ -256,22 +293,13 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 TETAP DI QUEUE SAMPAI KETEMU PARTNER!
-    # Kirim pesan "Waiting" setelah join queue
-    await update.message.reply_text("🔍 Waiting for another user...")
-    
-    # Loop sampai ketemu partner (tanpa batas)
-    partner = None
-    while partner is None:
-        partner = find_partner(user_id)
-        if partner is None:
-            await asyncio.sleep(0.5)
-            # Cek apakah user masih searching (tidak di-stop)
-            if not is_searching(user_id):
-                break
+    # 🔥 Cari partner langsung
+    partner = find_partner(user_id)
     
     if partner is None:
-        # User sudah stop searching
+        await update.message.reply_text("🔍 Waiting for another user...")
+        # Jalankan background task untuk menunggu partner
+        asyncio.create_task(wait_for_partner(user_id, update, context))
         return
     
     await context.bot.send_message(
@@ -282,8 +310,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=partner,
         text=PARTNER_FOUND_MESSAGE
     )
-    
-    # ================= STOP =================
+
+# ================= STOP =================
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
