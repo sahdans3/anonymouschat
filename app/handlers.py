@@ -256,18 +256,21 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 TETAP DI QUEUE SAMPAI KETEMU PARTNER!
+    # 🔥 Cari partner dengan timeout 10 detik
     partner = None
-    while partner is None:
+    for attempt in range(20):  # 20 x 0.5 = 10 detik
         partner = find_partner(user_id)
-        if partner is None:
-            await asyncio.sleep(0.5)
-            # Cek apakah user masih searching
-            if not is_searching(user_id):
-                break
+        if partner:
+            break
+        # Cek apakah user masih searching
+        if not is_searching(user_id):
+            break
+        await asyncio.sleep(0.5)
     
+    # Jika masih tidak ada partner, tetap di queue (tapi user mendapat pesan)
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
+        # JANGAN keluar dari queue! Tetap menunggu
         return
     
     await context.bot.send_message(
