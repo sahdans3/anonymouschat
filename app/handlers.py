@@ -257,13 +257,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 Cari partner - coba 5 kali dengan delay kecil
-    partner = None
-    for attempt in range(5):
-        partner = find_partner(user_id)
-        if partner:
-            break
-        await asyncio.sleep(0.2)  # 200ms delay antar percobaan
+    # 🔥 INSTAN - langsung cari partner (tanpa loop)
+    partner = find_partner(user_id)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -277,40 +272,6 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=partner,
         text=PARTNER_FOUND_MESSAGE
     )
-# ================= STOP =================
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    
-    partner_id = stop_chat(user_id)
-    clear_user_status(user_id)
-    
-    if not partner_id:
-        try:
-            await update.message.reply_text("❌ You are not in a chat.")
-        except TelegramError:
-            pass
-        return
-    
-    try:
-        await context.bot.send_message(
-            chat_id=partner_id, 
-            text="😞 Your partner has ended the chat."
-        )
-    except Forbidden:
-        remove_user(partner_id)
-    except TelegramError as e:
-        print(e)
-    
-    try:
-        await update.message.reply_text(
-            "Chat ended 😞",
-            reply_markup=feedback_keyboard()
-        )
-    except TelegramError as e:
-        print(e)
 
 # ================= PREMIUM PAYMENT HANDLERS =================
 
