@@ -462,6 +462,7 @@ def find_partner(user_id):
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         user_check = cursor.fetchone()
         if user_check and user_check[0] is not None:
+            logger.info(f"ℹ️ User {user_id} already in chat")
             cursor.execute("COMMIT")
             return None
         
@@ -472,8 +473,7 @@ def find_partner(user_id):
         user_preferred = user_info[1] if user_info else None
         is_premium = user_info[2] == 1 if user_info else False
         
-        # FIRST: Try to find instant match (user searching but not in queue)
-        # HAPUS kondisi premium = 0 agar semua user bisa bertemu
+        # FIRST: Try to find instant match
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -497,7 +497,16 @@ def find_partner(user_id):
             return partner_id
         
         # SECOND: Try to find partner from queue
-        # HAPUS kondisi premium = 0 agar semua user bisa bertemu
+        # 🔥 TAMBAHKAN: Cek jumlah user di queue
+        cursor.execute("SELECT COUNT(*) FROM waiting_queue")
+        queue_count = cursor.fetchone()[0]
+        logger.info(f"📊 Queue count: {queue_count}")
+        
+        # 🔥 TAMBAHKAN: Lihat isi queue
+        cursor.execute("SELECT user_id FROM waiting_queue ORDER BY created_at ASC")
+        queue_users = cursor.fetchall()
+        logger.info(f"📋 Queue users: {[u[0] for u in queue_users]}")
+        
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
@@ -536,15 +545,18 @@ def find_partner(user_id):
         partner = cursor.fetchone()
         
         if not partner:
+            logger.info(f"ℹ️ No partner in queue for user {user_id}")
             cursor.execute("COMMIT")
             return None
         
         partner_id = partner[0]
+        logger.info(f"🔍 Found partner in queue: {partner_id}")
         
         # Lock partner row
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
+            logger.info(f"ℹ️ Partner {partner_id} already in chat, cleaning up...")
             leave_queue(partner_id)
             cursor.execute("COMMIT")
             return None
