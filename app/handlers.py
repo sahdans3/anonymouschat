@@ -213,16 +213,11 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # LANGSUNG cari partner (tanpa delay)
     set_searching(user_id, 1)
+    join_queue(user_id)
     
-    # Coba instant match
+    # LANGSUNG cari partner (tanpa delay)
     partner = find_partner(user_id)
-    
-    # Jika tidak ada, masuk queue dan coba lagi (SEKALI)
-    if partner is None:
-        join_queue(user_id)
-        partner = find_partner(user_id)  # Langsung coba, tanpa loop
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -239,10 +234,10 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    # Kunci: Stop chat, tapi JANGAN clear status terlalu cepat
     old_partner = get_partner(user_id)
-    stop_chat(user_id)
-    clear_user_status(user_id)
     
+    # Kirim pesan ke partner lama (sebelum stop)
     if old_partner:
         try:
             await context.bot.send_message(
@@ -254,23 +249,29 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # LANGSUNG cari partner (tanpa delay)
+    # Stop chat dan clear status
+    stop_chat(user_id)
+    clear_user_status(user_id)
+    
+    # Set searching dan join queue
     set_searching(user_id, 1)
+    join_queue(user_id)
     
-    # Coba instant match
+    # LANGSUNG cari partner (tanpa delay)
     partner = find_partner(user_id)
-    
-    # Jika tidak ada, masuk queue dan coba lagi (SEKALI)
-    if partner is None:
-        join_queue(user_id)
-        partner = find_partner(user_id)  # Langsung coba, tanpa loop
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
         return
     
-    await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-    await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=PARTNER_FOUND_MESSAGE
+    )
+    await context.bot.send_message(
+        chat_id=partner,
+        text=PARTNER_FOUND_MESSAGE
+    )
 
 # ================= STOP =================
 

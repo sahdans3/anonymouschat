@@ -378,6 +378,7 @@ def is_searching(user_id):
         return_connection(db)
 
 def join_queue(user_id):
+    """Add user to queue with priority"""
     if not DATABASE_URL:
         return
     db = connect_db()
@@ -386,27 +387,37 @@ def join_queue(user_id):
     cursor = db.cursor()
     try:
         # Get user gender and preferences
-        cursor.execute("SELECT gender, preferred_gender FROM users WHERE user_id=%s", (user_id,))
+        cursor.execute("SELECT gender, preferred_gender, premium FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
+        is_premium = result[2] == 1 if result else False
         
+        # Cek apakah user sudah di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if cursor.fetchone():
             return
         
+        # Cek apakah user sedang dalam chat
         cursor.execute("SELECT partner_id FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         if result and result[0] is not None:
             return
         
+        # Premium user dapat prioritas (created_at + 0.1 detik lebih awal)
+        # Non-premium menggunakan created_at normal
         cursor.execute("""
-            INSERT INTO waiting_queue(user_id, gender, preferred_gender) 
-            VALUES(%s, %s, %s) 
+            INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
+            VALUES(%s, %s, %s, 
+                CASE WHEN %s = 1 
+                    THEN CURRENT_TIMESTAMP - INTERVAL '0.1 seconds'
+                    ELSE CURRENT_TIMESTAMP 
+                END
+            )
             ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, gender, preferred_gender))
+        """, (user_id, gender, preferred_gender, is_premium))
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue (gender: {gender}, prefers: {preferred_gender})")
+        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -467,9 +478,10 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
+                AND (premium = 0 OR premium = %s)
             LIMIT 1
             FOR UPDATE SKIP LOCKED
-        """, (user_id,))
+        """, (user_id, is_premium))
         
         instant_partner = cursor.fetchone()
         
@@ -482,7 +494,7 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return partner_id
         
-        # SECOND: Try to find partner from queue
+        # SECOND: Try to find partner from queue with gender preference (if premium)
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
@@ -495,7 +507,7 @@ def find_partner(user_id):
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
-                ORDER BY wq.created_at ASC
+                ORDER BY wq.created_at ASC, wq.id ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             """
@@ -511,7 +523,7 @@ def find_partner(user_id):
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
-                ORDER BY wq.created_at ASC
+                ORDER BY wq.created_at ASC, wq.id ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             """
