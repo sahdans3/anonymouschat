@@ -256,8 +256,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 Tambahkan delay 0.3 detik untuk menghindari race condition
-    await asyncio.sleep(0.3)
+    # 🔥 Tambahkan delay 0.5 detik untuk menghindari race condition
+    await asyncio.sleep(0.5)
     
     # Cari partner
     partner = find_partner(user_id)
