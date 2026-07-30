@@ -172,6 +172,7 @@ def check_premium(user_id):
         if not result:
             return False
         premium, expiry = result
+        # premium adalah integer (1 atau 0)
         if premium == 1:
             if expiry:
                 cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (expiry,))
@@ -290,6 +291,7 @@ def get_premium_status(user_id):
         cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         if result:
+            # premium adalah integer (1 atau 0)
             return result[0] == 1, result[1]
         return False, None
     except Exception as e:
@@ -391,7 +393,7 @@ def join_queue(user_id):
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
-        is_premium = result[2] == 1 if result else False
+        is_premium = result[2] == 1 if result else False  # Konversi ke boolean Python
         
         # Cek apakah user sudah di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
@@ -404,8 +406,8 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
+        # PERBAIKAN: Gunakan integer untuk premium (1 atau 0)
         # Premium user dapat prioritas (created_at + 0.1 detik lebih awal)
-        # Non-premium menggunakan created_at normal
         cursor.execute("""
             INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
             VALUES(%s, %s, %s, 
@@ -415,7 +417,7 @@ def join_queue(user_id):
                 END
             )
             ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, gender, preferred_gender, is_premium))
+        """, (user_id, gender, preferred_gender, is_premium))  # is_premium adalah 1 atau 0
         db.commit()
         logger.info(f"✅ User {user_id} joined queue (premium: {is_premium})")
     except Exception as e:
@@ -468,9 +470,10 @@ def find_partner(user_id):
         user_info = cursor.fetchone()
         user_gender = user_info[0] if user_info else None
         user_preferred = user_info[1] if user_info else None
-        is_premium = user_info[2] == 1 if user_info else False
+        is_premium = user_info[2] == 1 if user_info else False  # Konversi ke boolean Python
         
         # FIRST: Try to find instant match (user searching but not in queue)
+        # PERBAIKAN: Hanya premium = 1 atau premium = 0, tanpa boolean
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -478,10 +481,9 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
-                AND (premium = 0 OR premium = %s)
             LIMIT 1
             FOR UPDATE SKIP LOCKED
-        """, (user_id, is_premium))
+        """, (user_id,))
         
         instant_partner = cursor.fetchone()
         
@@ -494,7 +496,7 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return partner_id
         
-        # SECOND: Try to find partner from queue with gender preference (if premium)
+        # SECOND: Try to find partner from queue
         if is_premium and user_preferred and user_gender:
             query = """
                 SELECT wq.user_id
