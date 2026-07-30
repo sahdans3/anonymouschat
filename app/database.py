@@ -406,6 +406,7 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
+        # User tanpa gender (None) tetap bisa masuk queue
         # Premium user bisa filter gender, free user tidak
         if is_premium == 1 and preferred_gender and preferred_gender != 'any':
             cursor.execute("""
@@ -477,6 +478,7 @@ def find_partner(user_id):
         is_premium = user_info[2] == 1 if user_info else False
         
         # FIRST: Try to find instant match (user searching but not in queue)
+        # TIDAK perlu gender untuk instant match
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -484,7 +486,6 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
-                AND gender IS NOT NULL
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         """, (user_id,))
@@ -501,9 +502,8 @@ def find_partner(user_id):
             return partner_id
         
         # SECOND: Find partner from queue
-        # Jika user premium dan punya preferred_gender dan preferred_gender != 'any'
-        if is_premium and user_preferred and user_preferred != 'any':
-            # Cari partner dengan gender yang sesuai dengan preferred_gender
+        # Jika user premium dan punya preferred_gender dan preferred_gender != 'any' dan user punya gender
+        if is_premium and user_preferred and user_preferred != 'any' and user_gender:
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
@@ -512,7 +512,6 @@ def find_partner(user_id):
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
                     AND u.gender = %s
-                    AND u.gender IS NOT NULL
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
@@ -522,7 +521,8 @@ def find_partner(user_id):
             """
             params = (user_id, user_preferred)
         else:
-            # Free user atau tidak ada preferensi: cari siapa saja (termasuk gender yang sama)
+            # Free user, atau user tanpa gender, atau preferensi 'any'
+            # Cari siapa saja (tanpa filter gender)
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
@@ -530,7 +530,6 @@ def find_partner(user_id):
                 WHERE wq.user_id <> %s
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
-                    AND u.gender IS NOT NULL
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
