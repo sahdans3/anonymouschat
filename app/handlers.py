@@ -237,9 +237,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Dapatkan partner lama
     old_partner = get_partner(user_id)
     
-    # Stop chat
+    # Stop chat (HANYA stop_chat, JANGAN clear_user_status!)
     stop_chat(user_id)
-    clear_user_status(user_id)
     
     # Kirim pesan ke partner lama
     if old_partner:
@@ -253,7 +252,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Set searching dan join queue
+    # Set searching dan join queue (TANPA clear_user_status)
     set_searching(user_id, 1)
     join_queue(user_id)
     
