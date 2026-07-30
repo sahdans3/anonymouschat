@@ -393,7 +393,6 @@ def join_queue(user_id):
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
-        # Konversi premium ke integer (1 atau 0)
         is_premium = 1 if result and result[2] == 1 else 0
         
         # Cek apakah user sudah di queue
@@ -407,19 +406,23 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
-        # PERBAIKAN: is_premium sudah integer (1 atau 0)
-        cursor.execute("""
-            INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
-            VALUES(%s, %s, %s, 
-                CASE WHEN %s = 1 
-                    THEN CURRENT_TIMESTAMP - INTERVAL '0.1 seconds'
-                    ELSE CURRENT_TIMESTAMP 
-                END
-            )
-            ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, gender, preferred_gender, is_premium))
+        # Hanya premium user yang bisa filter gender
+        # Free user tidak punya preferred_gender (di-set NULL)
+        if is_premium == 1:
+            cursor.execute("""
+                INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
+                VALUES(%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) DO NOTHING
+            """, (user_id, gender, preferred_gender))
+        else:
+            cursor.execute("""
+                INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
+                VALUES(%s, %s, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) DO NOTHING
+            """, (user_id, gender))
+        
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium})")
+        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -473,7 +476,7 @@ def find_partner(user_id):
         user_preferred = user_info[1] if user_info else None
         is_premium = user_info[2] == 1 if user_info else False
         
-        # 🔥 FIRST: Try to find instant match (user searching but not in queue)
+        # FIRST: Try to find instant match (user searching but not in queue)
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -481,6 +484,7 @@ def find_partner(user_id):
                 AND searching = 1 
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
+                AND gender IS NOT NULL
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         """, (user_id,))
@@ -496,9 +500,9 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return partner_id
         
-        # 🔥 SECOND: Find partner from queue - FIXED
-        # Cari user di queue yang paling lama menunggu
-        if is_premium and user_preferred and user_gender:
+        # SECOND: Find partner from queue
+        # Jika user premium dan punya preferred_gender, cari yang cocok
+        if is_premium and user_preferred and user_preferred != 'any':
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
@@ -507,6 +511,7 @@ def find_partner(user_id):
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
                     AND u.gender = %s
+                    AND u.gender IS NOT NULL
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
@@ -516,6 +521,7 @@ def find_partner(user_id):
             """
             params = (user_id, user_preferred)
         else:
+            # Free user atau tidak ada preferensi: cari siapa saja
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
@@ -523,6 +529,7 @@ def find_partner(user_id):
                 WHERE wq.user_id <> %s
                     AND (u.partner_id IS NULL OR u.partner_id = 0)
                     AND u.searching = 1
+                    AND u.gender IS NOT NULL
                     AND wq.user_id NOT IN (
                         SELECT partner_id FROM users WHERE partner_id IS NOT NULL
                     )
