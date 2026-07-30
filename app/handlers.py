@@ -45,48 +45,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.message.reply_text(
             "👋 Welcome!\n\n"
+            "Type your gender: *male* or *female*\n"
             "Type /search to find a partner.\n"
             "Type /premium to see premium features.\n"
-            "Type /myprofile to see your profile."
+            "Type /myprofile to see your profile.",
+            parse_mode='Markdown'
         )
     except TelegramError as e:
         print(e)
 
 # ================= PREMIUM COMMANDS =================
-
-# ================= SET GENDER (OTOMATIS) =================
-
-async def setgender_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Auto detect gender from text message"""
-    if update.message is None:
-        return
-    
-    user_id = update.effective_user.id
-    text = update.message.text.lower().strip()
-    
-    # Cek apakah teks adalah male atau female
-    if text in ['male', 'female']:
-        register_user(user_id)
-        
-        # Cek apakah user sedang dalam chat
-        if get_partner(user_id):
-            await update.message.reply_text(
-                "❌ You are in a chat. Use /stop first to change gender."
-            )
-            return
-        
-        if set_gender(user_id, text):
-            await update.message.reply_text(
-                f"✅ Your gender has been set to: *{text}*\n\n"
-                "Now you can search for partner:\n"
-                "/search - find a partner\n\n"
-                "*Premium Users:*\n"
-                "/setpref male/female/any - filter partner by gender",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Failed to set gender. Please try again.")
-        return
 
 async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set user's preferred gender (PREMIUM ONLY)"""
@@ -181,16 +149,17 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 Preferred: {preferred or 'Not set'}\n"
         f"🌟 Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}\n"
         f"💬 Partner: {partner if partner else 'None'}\n\n"
-        "*Commands:*\n"
-        "/setgender male/female - Set your gender\n"
+        "*How to use:*\n"
+        "Type *male* or *female* - Set your gender\n"
         "/setpref male/female/any - Set preferred gender (premium)\n"
         "/premium - Buy premium\n"
-        "/search - Find partner"
+        "/search - Find partner",
+        parse_mode='Markdown'
     )
     
     await update.message.reply_text(profile_text, parse_mode='Markdown')
 
-# ================= BALANCE (CEK SALDO STARS) =================
+# ================= BALANCE =================
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cek saldo Stars bot"""
@@ -200,7 +169,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     try:
-        # Panggil API Telegram untuk cek saldo Stars
         star_balance = await context.bot.get_my_star_balance()
         
         await update.message.reply_text(
@@ -237,22 +205,20 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not gender:
         await update.message.reply_text(
             "⚠️ Please set your gender first!\n\n"
-            "Use /setgender male or /setgender female\n\n"
-            "This helps us match you with the right partner."
+            "Just type: *male* or *female*\n\n"
+            "This helps us match you with the right partner.",
+            parse_mode='Markdown'
         )
         return
     
-    # SET SEARCHING LANGSUNG
     set_searching(user_id, 1)
     
-    # Coba cari partner INSTAN
+    # Try instant match first
     partner = find_partner(user_id)
     
-    # Jika tidak ada partner, baru masuk queue
     if partner is None:
         join_queue(user_id)
-        
-        # Coba cari partner lagi (dengan retry cepat)
+        # Quick retry
         for attempt in range(5):
             partner = find_partner(user_id)
             if partner:
@@ -274,14 +240,10 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # Dapatkan partner lama
     old_partner = get_partner(user_id)
-    
-    # Stop chat
     stop_chat(user_id)
     clear_user_status(user_id)
     
-    # Kirim pesan ke partner lama
     if old_partner:
         try:
             await context.bot.send_message(
@@ -293,36 +255,27 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # SET SEARCHING LANGSUNG (tanpa delay)
     set_searching(user_id, 1)
     
-    # Coba cari partner INSTAN (tanpa queue)
+    # Try instant match first
     partner = find_partner(user_id)
     
-    # Jika tidak ada partner, baru masuk queue
     if partner is None:
         join_queue(user_id)
-        
-        # Coba cari partner lagi (dengan retry cepat)
+        # Quick retry
         for attempt in range(5):
             partner = find_partner(user_id)
             if partner:
                 break
-            await asyncio.sleep(0.2)  # delay sangat cepat 0.2 detik
+            await asyncio.sleep(0.2)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
         return
     
-    # Kirim pesan ke kedua user
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=PARTNER_FOUND_MESSAGE
-    )
-    await context.bot.send_message(
-        chat_id=partner,
-        text=PARTNER_FOUND_MESSAGE
-    )
+    await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+    await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+
 # ================= STOP =================
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -357,6 +310,32 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except TelegramError as e:
         print(e)
+
+# ================= PREMIUM PAYMENT HANDLERS =================
+
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verifikasi sebelum pembayaran"""
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aktifkan premium setelah pembayaran berhasil"""
+    user_id = update.effective_user.id
+    payload = update.message.successful_payment.payload
+    days = int(payload.split('_')[1])
+    
+    if set_premium(user_id, days):
+        await update.message.reply_text(
+            f"✅ *Premium Active!*\n\n"
+            f"🎉 Premium {days} hari sudah aktif!\n\n"
+            "Fitur yang tersedia:\n"
+            "🎯 Filter gender\n"
+            "🔝 Prioritas matching\n\n"
+            "Gunakan /setpref untuk atur preferensi gender!",
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text("❌ Gagal aktivasi premium. Hubungi admin.")
 
 # ================= REPLY HANDLER =================
 
@@ -507,7 +486,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Gagal mengirim media. Silakan coba lagi.")
 
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGE HANDLER (OTOMATIS SET GENDER) =================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -519,13 +498,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_handler(update, context)
         return
     
-    # CEK APAKAH INI PERINTAH SET GENDER (male/female)
+    # CEK APAKAH INI SET GENDER (male/female)
     text = update.message.text.lower().strip()
     if text in ['male', 'female']:
-        # Cek apakah user sudah register dan punya partner
+        # Cek apakah user sedang chat
         partner_id = get_partner(user_id)
         if partner_id:
-            # Jika sedang chat, kirim pesan biasa (bukan set gender)
+            # Jika sedang chat, kirim pesan biasa
             try:
                 await context.bot.send_message(chat_id=partner_id, text=update.message.text)
                 print("✅ Message sent")
@@ -558,7 +537,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(0.3)
     
     if partner_id is None:
-        # Jika tidak dalam chat dan tidak ada gender, minta set gender
+        # Jika tidak dalam chat, cek apakah user sudah set gender
         gender, _ = get_user_gender(user_id)
         if not gender:
             await update.message.reply_text(
@@ -586,6 +565,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
         else:
             await update.message.reply_text("❌ Failed to send message. Please try again.")
+
 # ================= BUTTON HANDLER =================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -593,67 +573,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query is None:
         return
     
-    try:
-        await query.answer()
-        user_id = query.from_user.id
-        data = query.data
-        
-        # Handle premium callback
-        if data.startswith('premium_'):
-            if data == 'premium_help':
-                await query.edit_message_text(
-                    "💳 *How to Buy Premium*\n\n"
-                    "1. Choose your plan\n"
-                    "2. Pay with Telegram Stars\n"
-                    "3. Premium activated instantly!\n\n"
-                    "*Telegram Stars* are Telegram's in-app currency.\n"
-                    "You can buy them directly from Telegram.",
-                    parse_mode='Markdown',
-                    reply_markup=premium_keyboard()
-                )
-                return
-            
-            days = int(data.split('_')[1])
-            
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+    
+    # Handle premium
+    if data.startswith('premium_'):
+        if data == 'premium_help':
             await query.edit_message_text(
-                f"⏳ Processing your premium purchase for {days} days...\n\n"
-                "Please wait..."
+                "💳 *Cara Bayar Premium*\n\n"
+                "1. Pilih paket premium\n"
+                "2. Bayar dengan Telegram Stars\n"
+                "3. Premium aktif otomatis!\n\n"
+                "*Telegram Stars* adalah mata uang Telegram.\n"
+                "Kamu bisa beli Stars langsung dari Telegram.",
+                parse_mode='Markdown',
+                reply_markup=premium_keyboard()
             )
-            
-            time.sleep(2)
-            
-            if set_premium(user_id, days):
-                await query.edit_message_text(
-                    f"✅ *Premium Activated!*\n\n"
-                    f"🎉 You now have premium for {days} days!\n\n"
-                    "*Features unlocked:*\n"
-                    "🎯 Gender filtering\n"
-                    "🔝 Priority matching\n"
-                    "💬 Unlimited chat history\n\n"
-                    "Use /setpref to set your preferred gender!",
-                    parse_mode='Markdown'
-                )
-            else:
-                await query.edit_message_text(
-                    "❌ Failed to activate premium. Please try again.",
-                    reply_markup=premium_keyboard()
-                )
             return
         
-        # Handle feedback
-        partner_id = get_partner(user_id)
-        if partner_id:
-            try:
-                save_feedback(from_user=user_id, to_user=partner_id, feedback=data)
-            except Exception as e:
-                print(e)
+        days = int(data.split('_')[1])
         
-        await query.edit_message_text("✅ Thank you for your feedback!")
-        
-    except BadRequest:
-        pass
-    except TelegramError as e:
-        print(e)
+        # Kirim invoice dengan Telegram Stars
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"Premium {days} Hari",
+            description=f"Aktifkan premium selama {days} hari!\n\nFitur:\n✅ Filter gender\n✅ Prioritas matching",
+            payload=f"premium_{days}",
+            provider_token="",
+            currency="XTR",
+            prices=[{"label": f"{days} Hari Premium", "amount": days * 2}],
+            start_parameter="premium_subscription"
+        )
+        return
+    
+    # Handle feedback
+    partner_id = get_partner(user_id)
+    if partner_id:
+        try:
+            save_feedback(from_user=user_id, to_user=partner_id, feedback=data)
+        except Exception as e:
+            print(e)
+    
+    await query.edit_message_text("✅ Thank you for your feedback!")
 
 # ================= ERROR HANDLER =================
 
