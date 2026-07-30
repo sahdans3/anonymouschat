@@ -478,7 +478,6 @@ def find_partner(user_id):
         is_premium = user_info[2] == 1 if user_info else False
         
         # FIRST: Try to find instant match (user searching but not in queue)
-        # TIDAK perlu gender untuk instant match
         cursor.execute("""
             SELECT user_id 
             FROM users 
@@ -501,8 +500,7 @@ def find_partner(user_id):
             cursor.execute("COMMIT")
             return partner_id
         
-        # SECOND: Find partner from queue
-        # Jika user premium dan punya preferred_gender dan preferred_gender != 'any' dan user punya gender
+        # SECOND: Find partner from queue with SKIP LOCKED
         if is_premium and user_preferred and user_preferred != 'any' and user_gender:
             query = """
                 SELECT wq.user_id
@@ -521,8 +519,6 @@ def find_partner(user_id):
             """
             params = (user_id, user_preferred)
         else:
-            # Free user, atau user tanpa gender, atau preferensi 'any'
-            # Cari siapa saja (tanpa filter gender)
             query = """
                 SELECT wq.user_id
                 FROM waiting_queue wq
