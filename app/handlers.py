@@ -194,6 +194,35 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(profile_text, parse_mode='Markdown')
 
+# ================= BALANCE (CEK SALDO STARS) =================
+
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cek saldo Stars bot"""
+    if update.message is None:
+        return
+    
+    user_id = update.effective_user.id
+    
+    try:
+        # Panggil API Telegram untuk cek saldo Stars
+        star_balance = await context.bot.get_my_star_balance()
+        
+        await update.message.reply_text(
+            f"⭐ *Saldo Stars Bot*\n\n"
+            f"Total Stars: *{star_balance}* ⭐\n\n"
+            f"💡 1 Star ≈ $0.013 (nilai setelah biaya)\n"
+            f"📤 Minimal withdraw: 1000 Stars\n"
+            f"⏳ Masa tunggu withdraw: 21 hari\n\n"
+            f"🔗 Tarik di: https://fragment.com",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"❌ Balance error: {e}")
+        await update.message.reply_text(
+            "❌ Gagal mengambil saldo Stars.\n"
+            "Pastikan bot sudah terintegrasi dengan Telegram Stars."
+        )
+
 # ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -217,10 +246,22 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # SET SEARCHING LANGSUNG
     set_searching(user_id, 1)
-    join_queue(user_id)
     
+    # Coba cari partner INSTAN
     partner = find_partner(user_id)
+    
+    # Jika tidak ada partner, baru masuk queue
+    if partner is None:
+        join_queue(user_id)
+        
+        # Coba cari partner lagi (dengan retry cepat)
+        for attempt in range(5):
+            partner = find_partner(user_id)
+            if partner:
+                break
+            await asyncio.sleep(0.2)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
@@ -237,10 +278,14 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    # Dapatkan partner lama
     old_partner = get_partner(user_id)
+    
+    # Stop chat
     stop_chat(user_id)
     clear_user_status(user_id)
     
+    # Kirim pesan ke partner lama
     if old_partner:
         try:
             await context.bot.send_message(
@@ -252,18 +297,36 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
+    # SET SEARCHING LANGSUNG (tanpa delay)
     set_searching(user_id, 1)
-    join_queue(user_id)
     
+    # Coba cari partner INSTAN (tanpa queue)
     partner = find_partner(user_id)
+    
+    # Jika tidak ada partner, baru masuk queue
+    if partner is None:
+        join_queue(user_id)
+        
+        # Coba cari partner lagi (dengan retry cepat)
+        for attempt in range(5):
+            partner = find_partner(user_id)
+            if partner:
+                break
+            await asyncio.sleep(0.2)  # delay sangat cepat 0.2 detik
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
         return
     
-    await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-    await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-
+    # Kirim pesan ke kedua user
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=PARTNER_FOUND_MESSAGE
+    )
+    await context.bot.send_message(
+        chat_id=partner,
+        text=PARTNER_FOUND_MESSAGE
+    )
 # ================= STOP =================
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
