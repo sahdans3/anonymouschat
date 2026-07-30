@@ -54,43 +54,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= PREMIUM COMMANDS =================
 
-async def setgender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set user's gender"""
+# ================= SET GENDER (OTOMATIS) =================
+
+async def setgender_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto detect gender from text message"""
     if update.message is None:
         return
+    
     user_id = update.effective_user.id
-    register_user(user_id)
+    text = update.message.text.lower().strip()
     
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Please specify your gender.\n\n"
-            "Usage: /setgender male\n"
-            "Usage: /setgender female\n\n"
-            "Example: /setgender male"
-        )
+    # Cek apakah teks adalah male atau female
+    if text in ['male', 'female']:
+        register_user(user_id)
+        
+        # Cek apakah user sedang dalam chat
+        if get_partner(user_id):
+            await update.message.reply_text(
+                "❌ You are in a chat. Use /stop first to change gender."
+            )
+            return
+        
+        if set_gender(user_id, text):
+            await update.message.reply_text(
+                f"✅ Your gender has been set to: *{text}*\n\n"
+                "Now you can search for partner:\n"
+                "/search - find a partner\n\n"
+                "*Premium Users:*\n"
+                "/setpref male/female/any - filter partner by gender",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Failed to set gender. Please try again.")
         return
-    
-    gender = args[0].lower()
-    if gender not in ['male', 'female']:
-        await update.message.reply_text(
-            "❌ Invalid gender.\n\n"
-            "Please choose: male or female\n"
-            "Example: /setgender male"
-        )
-        return
-    
-    if set_gender(user_id, gender):
-        await update.message.reply_text(
-            f"✅ Your gender has been set to: *{gender}*\n\n"
-            "Now you can set your preferred gender:\n"
-            "/setpref male - to find male partners\n"
-            "/setpref female - to find female partners\n"
-            "/setpref any - to find any gender",
-            parse_mode='Markdown'
-        )
-    else:
-        await update.message.reply_text("❌ Failed to set gender. Please try again.")
 
 async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set user's preferred gender (PREMIUM ONLY)"""
@@ -518,8 +514,39 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     
+    # CEK APAKAH INI REPLY
     if update.message.reply_to_message is not None:
         await reply_handler(update, context)
+        return
+    
+    # CEK APAKAH INI PERINTAH SET GENDER (male/female)
+    text = update.message.text.lower().strip()
+    if text in ['male', 'female']:
+        # Cek apakah user sudah register dan punya partner
+        partner_id = get_partner(user_id)
+        if partner_id:
+            # Jika sedang chat, kirim pesan biasa (bukan set gender)
+            try:
+                await context.bot.send_message(chat_id=partner_id, text=update.message.text)
+                print("✅ Message sent")
+                return
+            except Exception as e:
+                print(f"❌ Send error: {e}")
+                return
+        
+        # Jika tidak sedang chat, set gender
+        register_user(user_id)
+        if set_gender(user_id, text):
+            await update.message.reply_text(
+                f"✅ Your gender has been set to: *{text}*\n\n"
+                "Now you can search for partner:\n"
+                "/search - find a partner\n\n"
+                "*Premium Users:*\n"
+                "/setpref male/female/any - filter partner by gender",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Failed to set gender. Please try again.")
         return
     
     # Retry get_partner (3 attempts)
@@ -531,7 +558,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(0.3)
     
     if partner_id is None:
-        await update.message.reply_text("❌ You are not in a chat. Use /search to find a partner.")
+        # Jika tidak dalam chat dan tidak ada gender, minta set gender
+        gender, _ = get_user_gender(user_id)
+        if not gender:
+            await update.message.reply_text(
+                "⚠️ Please set your gender first!\n\n"
+                "Just type: *male* or *female*\n\n"
+                "This helps us match you with the right partner.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ You are not in a chat. Use /search to find a partner.")
         return
     
     try:
@@ -549,7 +586,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
         else:
             await update.message.reply_text("❌ Failed to send message. Please try again.")
-
 # ================= BUTTON HANDLER =================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
