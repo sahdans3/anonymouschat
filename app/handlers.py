@@ -252,17 +252,17 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Set searching dan join queue (TANPA clear_user_status)
+    # Set searching dan join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 Cari partner - coba 3 kali dengan delay 0.3 detik
+    # 🔥 Cari partner - coba 10 kali dengan delay 0.2 detik (total 2 detik)
     partner = None
-    for attempt in range(3):
+    for attempt in range(10):
         partner = find_partner(user_id)
         if partner:
             break
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
     
     if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")

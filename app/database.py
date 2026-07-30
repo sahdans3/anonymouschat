@@ -460,14 +460,14 @@ def find_partner(user_id):
     cursor = db.cursor()
     
     try:
-        cursor.execute("BEGIN")
+        # Jangan pakai BEGIN/COMMIT manual, biarkan autocommit
+        # cursor.execute("BEGIN")  <-- HAPUS INI!
         
         # Check if user is already in chat
-        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
+        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (user_id,))
         user_check = cursor.fetchone()
         if user_check and user_check[0] is not None:
             logger.info(f"ℹ️ User {user_id} already in chat")
-            cursor.execute("COMMIT")
             return None
         
         # Get user gender and premium status
@@ -486,7 +486,6 @@ def find_partner(user_id):
                 AND partner_id IS NULL
                 AND user_id NOT IN (SELECT user_id FROM waiting_queue)
             LIMIT 1
-            FOR UPDATE SKIP LOCKED
         """, (user_id,))
         
         instant_partner = cursor.fetchone()
@@ -497,10 +496,10 @@ def find_partner(user_id):
             
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
             cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
-            cursor.execute("COMMIT")
+            db.commit()
             return partner_id
         
-        # SECOND: Find partner from queue with SKIP LOCKED
+        # SECOND: Find partner from queue
         if is_premium and user_preferred and user_preferred != 'any' and user_gender:
             query = """
                 SELECT wq.user_id
@@ -515,7 +514,6 @@ def find_partner(user_id):
                     )
                 ORDER BY wq.created_at ASC, wq.id ASC
                 LIMIT 1
-                FOR UPDATE SKIP LOCKED
             """
             params = (user_id, user_preferred)
         else:
@@ -531,7 +529,6 @@ def find_partner(user_id):
                     )
                 ORDER BY wq.created_at ASC, wq.id ASC
                 LIMIT 1
-                FOR UPDATE SKIP LOCKED
             """
             params = (user_id,)
         
@@ -540,19 +537,18 @@ def find_partner(user_id):
         
         if not partner:
             logger.info(f"ℹ️ No partner in queue for user {user_id}")
-            cursor.execute("COMMIT")
             return None
         
         partner_id = partner[0]
         logger.info(f"🔍 Found partner in queue: {partner_id}")
         
-        # Lock partner row
-        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s FOR UPDATE", (partner_id,))
+        # Check partner status
+        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
             logger.info(f"ℹ️ Partner {partner_id} already in chat, cleaning up...")
-            leave_queue(partner_id)
-            cursor.execute("COMMIT")
+            cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (partner_id,))
+            db.commit()
             return None
         
         # Update both users
@@ -560,14 +556,14 @@ def find_partner(user_id):
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
-        cursor.execute("COMMIT")
+        db.commit()
         logger.info(f"✅ Partner found from queue: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
         logger.error(f"❌ Find partner error: {e}")
         try:
-            cursor.execute("ROLLBACK")
+            db.rollback()
         except:
             pass
         return None
