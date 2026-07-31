@@ -192,24 +192,26 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= WAIT FOR PARTNER (BACKGROUND TASK) =================
 
 async def wait_for_partner(user_id, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Background task to wait for partner"""
+    """Background task to wait for partner - sends notification only once"""
     partner = None
-    attempts = 0
+    waiting_message_sent = False  # Flag untuk cek sudah kirim pesan atau belum
+    
     while partner is None:
         partner = find_partner(user_id)
         if partner:
             break
-        attempts += 1
-        if attempts > 20:  # 10 detik timeout (20 x 0.5)
-            # Kirim pesan bahwa masih mencari
+        
+        # Kirim pesan "Still searching..." hanya SEKALI
+        if not waiting_message_sent:
             await context.bot.send_message(
                 chat_id=user_id,
                 text="⏳ Still searching... We'll notify you when a partner is found.\n"
                      "You can use /stop to cancel."
             )
-            # Reset attempts agar tidak spam
-            attempts = 0
+            waiting_message_sent = True
+        
         await asyncio.sleep(0.5)
+        
         # Cek apakah user masih searching
         if not is_searching(user_id):
             return
