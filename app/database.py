@@ -444,8 +444,7 @@ def find_partner(user_id):
         if not cursor.fetchone():
             return None
         
-        # 3. Ambil user pertama di queue (yang paling lama menunggu)
-        #    KECUALI user itu sendiri
+        # 3. Ambil user pertama di queue (FIFO)
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
@@ -466,7 +465,6 @@ def find_partner(user_id):
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
-            # Partner sudah dalam chat, hapus dari queue
             cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (partner_id,))
             db.commit()
             return None

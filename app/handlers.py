@@ -3,6 +3,8 @@ from telegram.ext import ContextTypes
 from telegram.error import Forbidden, BadRequest, TelegramError
 import asyncio
 import io
+import time
+from datetime import datetime, timedelta
 
 from app.database import (
     register_user,
@@ -32,6 +34,24 @@ PARTNER_FOUND_MESSAGE = (
     "/stop — stop this chat\n\n"
     "https://t.me/Annonymous_Chat_Bot"
 )
+
+# ================= COOLDOWN TRACKER =================
+
+user_commands = {}
+
+async def check_cooldown(user_id, command, cooldown=5):
+    """Cek cooldown per user per command"""
+    key = f"{user_id}_{command}"
+    now = datetime.now()
+    
+    if key in user_commands:
+        last_time = user_commands[key]
+        diff = (now - last_time).total_seconds()
+        if diff < cooldown:
+            return False, int(cooldown - diff) + 1
+    
+    user_commands[key] = now
+    return True, 0
 
 # ================= START =================
 
@@ -189,43 +209,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Pastikan bot sudah terintegrasi dengan Telegram Stars."
         )
 
-# ================= WAIT FOR PARTNER (BACKGROUND TASK) =================
-
-async def wait_for_partner(user_id, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Background task to wait for partner - sends notification only once"""
-    partner = None
-    waiting_message_sent = False  # Flag untuk cek sudah kirim pesan atau belum
-    
-    while partner is None:
-        partner = find_partner(user_id)
-        if partner:
-            break
-        
-        # Kirim pesan "Still searching..." hanya SEKALI
-        if not waiting_message_sent:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="⏳ Still searching... We'll notify you when a partner is found.\n"
-                     "You can use /stop to cancel."
-            )
-            waiting_message_sent = True
-        
-        await asyncio.sleep(0.5)
-        
-        # Cek apakah user masih searching
-        if not is_searching(user_id):
-            return
-    
-    if partner:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=PARTNER_FOUND_MESSAGE
-        )
-        await context.bot.send_message(
-            chat_id=partner,
-            text=PARTNER_FOUND_MESSAGE
-        )
-
 # ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,32 +218,41 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     register_user(user_id)
     clear_user_status(user_id)
     
+    # Cek cooldown
+    can_proceed, wait_time = await check_cooldown(user_id, "search", 3)
+    if not can_proceed:
+        await update.message.reply_text(
+            f"⏳ Please wait {wait_time} seconds before using /search again."
+        )
+        return
+    
     if get_partner(user_id):
         await update.message.reply_text("💬 You are already chatting.\nUse /next or /stop.")
         return
     
-    # Cek gender
+    # Check if user has set gender
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
             "⚠️ Please set your gender first!\n\n"
-            "Just type: *male* or *female*",
+            "Just type: *male* or *female*\n\n"
+            "This helps us match you with the right partner.",
             parse_mode='Markdown'
         )
         return
     
-    # Join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
     # Coba cari partner SEKALI
     partner = find_partner(user_id)
     
-    if partner:
-        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-    else:
+    if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
+        return
+    
+    await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+    await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
 
 # ================= NEXT =================
 
@@ -269,6 +261,14 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     register_user(user_id)
+    
+    # Cek cooldown (5 detik)
+    can_proceed, wait_time = await check_cooldown(user_id, "next", 5)
+    if not can_proceed:
+        await update.message.reply_text(
+            f"⏳ Please wait {wait_time} seconds before using /next again."
+        )
+        return
     
     # Dapatkan partner lama
     old_partner = get_partner(user_id)
@@ -288,18 +288,25 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Join queue
+    # Set searching dan join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
     # Coba cari partner SEKALI
     partner = find_partner(user_id)
     
-    if partner:
-        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-    else:
+    if partner is None:
         await update.message.reply_text("🔍 Waiting for another user...")
+        return
+    
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=PARTNER_FOUND_MESSAGE
+    )
+    await context.bot.send_message(
+        chat_id=partner,
+        text=PARTNER_FOUND_MESSAGE
+    )
 
 # ================= STOP =================
 
