@@ -239,31 +239,28 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💬 You are already chatting.\nUse /next or /stop.")
         return
     
-    # Check if user has set gender
+    # Cek gender
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
             "⚠️ Please set your gender first!\n\n"
-            "Just type: *male* or *female*\n\n"
-            "This helps us match you with the right partner.",
+            "Just type: *male* or *female*",
             parse_mode='Markdown'
         )
         return
     
+    # Join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 Cari partner langsung
+    # Coba cari partner SEKALI
     partner = find_partner(user_id)
     
-    if partner is None:
+    if partner:
+        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+    else:
         await update.message.reply_text("🔍 Waiting for another user...")
-        # Jalankan background task untuk menunggu partner
-        asyncio.create_task(wait_for_partner(user_id, update, context))
-        return
-    
-    await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-    await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
 
 # ================= NEXT =================
 
@@ -291,27 +288,18 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Set searching dan join queue
+    # Join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 Cari partner langsung
+    # Coba cari partner SEKALI
     partner = find_partner(user_id)
     
-    if partner is None:
+    if partner:
+        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+    else:
         await update.message.reply_text("🔍 Waiting for another user...")
-        # Jalankan background task untuk menunggu partner
-        asyncio.create_task(wait_for_partner(user_id, update, context))
-        return
-    
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=PARTNER_FOUND_MESSAGE
-    )
-    await context.bot.send_message(
-        chat_id=partner,
-        text=PARTNER_FOUND_MESSAGE
-    )
 
 # ================= STOP =================
 
