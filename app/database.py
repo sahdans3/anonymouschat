@@ -422,7 +422,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner dengan sistem FIFO - pasangkan user yang masuk queue duluan"""
+    """Find partner - SUPER CEPAT"""
     if not DATABASE_URL:
         return None
     
@@ -444,7 +444,7 @@ def find_partner(user_id):
         if not cursor.fetchone():
             return None
         
-        # 3. Ambil user pertama di queue (yang paling lama menunggu)
+        # 3. Ambil user pertama di queue (FIFO)
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
@@ -461,7 +461,7 @@ def find_partner(user_id):
         
         partner_id = partner[0]
         
-        # 4. Verifikasi partner masih valid
+        # 4. Verifikasi partner
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
@@ -469,15 +469,12 @@ def find_partner(user_id):
             db.commit()
             return None
         
-        # 5. Pasangkan kedua user
+        # 5. Pasangkan
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
-        
-        # 6. Hapus kedua user dari queue
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         db.commit()
-        logger.info(f"✅ Partner found: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
@@ -486,38 +483,6 @@ def find_partner(user_id):
             db.rollback()
         except:
             pass
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def stop_chat(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT partner_id FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        partner_id = result[0] if result else None
-        
-        cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (user_id,))
-        if partner_id:
-            cursor.execute("UPDATE users SET partner_id=NULL, searching=0 WHERE user_id=%s", (partner_id,))
-        
-        leave_queue(user_id)
-        if partner_id:
-            leave_queue(partner_id)
-        
-        db.commit()
-        logger.info(f"✅ Chat stopped: {user_id} with {partner_id}")
-        return partner_id
-        
-    except Exception as e:
-        logger.error(f"❌ Stop chat error: {e}")
-        db.rollback()
         return None
     finally:
         cursor.close()
@@ -603,3 +568,4 @@ def save_feedback(from_user, to_user, feedback):
     finally:
         cursor.close()
         return_connection(db)
+        
