@@ -39,7 +39,7 @@ PARTNER_FOUND_MESSAGE = (
 
 user_commands = {}
 
-async def check_cooldown(user_id, command, cooldown=5):
+async def check_cooldown(user_id, command, cooldown=3):
     """Cek cooldown per user per command"""
     key = f"{user_id}_{command}"
     now = datetime.now()
@@ -81,7 +81,6 @@ async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # Check if premium
     if not check_premium(user_id):
         await update.message.reply_text(
             "🔒 *Premium Feature*\n\n"
@@ -230,21 +229,21 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💬 You are already chatting.\nUse /next or /stop.")
         return
     
-    # Check if user has set gender
+    # Check gender
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
             "⚠️ Please set your gender first!\n\n"
-            "Just type: *male* or *female*\n\n"
-            "This helps us match you with the right partner.",
+            "Just type: *male* or *female*",
             parse_mode='Markdown'
         )
         return
     
+    # Join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Coba cari partner SEKALI
+    # 🔥 LANGSUNG cari partner
     partner = find_partner(user_id)
     
     if partner is None:
@@ -262,8 +261,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # Cek cooldown (5 detik)
-    can_proceed, wait_time = await check_cooldown(user_id, "next", 5)
+    # Cek cooldown (3 detik)
+    can_proceed, wait_time = await check_cooldown(user_id, "next", 3)
     if not can_proceed:
         await update.message.reply_text(
             f"⏳ Please wait {wait_time} seconds before using /next again."
@@ -288,11 +287,11 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error sending to old partner: {e}")
     
-    # Set searching dan join queue
+    # Join queue
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # Coba cari partner SEKALI
+    # 🔥 LANGSUNG cari partner
     partner = find_partner(user_id)
     
     if partner is None:
@@ -346,12 +345,10 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= PREMIUM PAYMENT HANDLERS =================
 
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Verifikasi sebelum pembayaran"""
     query = update.pre_checkout_query
     await query.answer(ok=True)
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Aktifkan premium setelah pembayaran berhasil"""
     user_id = update.effective_user.id
     payload = update.message.successful_payment.payload
     days = int(payload.split('_')[1])
@@ -518,7 +515,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Gagal mengirim media. Silakan coba lagi.")
 
-# ================= MESSAGE HANDLER (OTOMATIS SET GENDER) =================
+# ================= MESSAGE HANDLER =================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -533,10 +530,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # CEK APAKAH INI SET GENDER (male/female)
     text = update.message.text.lower().strip()
     if text in ['male', 'female']:
-        # Cek apakah user sedang chat
         partner_id = get_partner(user_id)
         if partner_id:
-            # Jika sedang chat, kirim pesan biasa
             try:
                 await context.bot.send_message(chat_id=partner_id, text=update.message.text)
                 print("✅ Message sent")
@@ -545,7 +540,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"❌ Send error: {e}")
                 return
         
-        # Jika tidak sedang chat, set gender
         register_user(user_id)
         if set_gender(user_id, text):
             await update.message.reply_text(
@@ -560,7 +554,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to set gender. Please try again.")
         return
     
-    # Retry get_partner (3 attempts)
     partner_id = None
     for attempt in range(3):
         partner_id = get_partner(user_id)
@@ -569,13 +562,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(0.3)
     
     if partner_id is None:
-        # Jika tidak dalam chat, cek apakah user sudah set gender
         gender, _ = get_user_gender(user_id)
         if not gender:
             await update.message.reply_text(
                 "⚠️ Please set your gender first!\n\n"
-                "Just type: *male* or *female*\n\n"
-                "This helps us match you with the right partner.",
+                "Just type: *male* or *female*",
                 parse_mode='Markdown'
             )
         else:
@@ -609,7 +600,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
-    # Handle premium
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
@@ -626,7 +616,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         days = int(data.split('_')[1])
         
-        # Kirim invoice dengan Telegram Stars
         await context.bot.send_invoice(
             chat_id=user_id,
             title=f"Premium {days} Hari",
@@ -639,7 +628,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:

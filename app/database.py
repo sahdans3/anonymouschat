@@ -422,7 +422,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner dengan sistem FIFO - cepat dan teratur"""
+    """Find partner dengan sistem FIFO - pasangkan user yang masuk queue duluan"""
     if not DATABASE_URL:
         return None
     
@@ -444,7 +444,7 @@ def find_partner(user_id):
         if not cursor.fetchone():
             return None
         
-        # 3. Ambil user pertama di queue (FIFO)
+        # 3. Ambil user pertama di queue (yang paling lama menunggu)
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
