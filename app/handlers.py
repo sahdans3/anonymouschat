@@ -25,7 +25,6 @@ from app.database import (
     start_chat_session,
     end_chat_session,
     get_chat_report,
-    get_active_chat
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
