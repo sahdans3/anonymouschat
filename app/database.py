@@ -101,7 +101,8 @@ def init_db():
             id SERIAL PRIMARY KEY,
             from_user BIGINT NOT NULL,
             to_user BIGINT NOT NULL,
-            feedback VARCHAR(50) NOT NULL
+            feedback VARCHAR(50) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -112,6 +113,17 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             gender VARCHAR(10) DEFAULT NULL,
             preferred_gender VARCHAR(10) DEFAULT NULL
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id SERIAL PRIMARY KEY,
+            user1 BIGINT NOT NULL,
+            user2 BIGINT NOT NULL,
+            start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            end_time TIMESTAMP DEFAULT NULL,
+            message_count INT DEFAULT 0
         )
     """)
     
@@ -148,6 +160,132 @@ def start_keep_alive():
         logger.info("🔄 Database keep-alive started")
     except Exception as e:
         logger.error(f"⚠️ Failed to start keep-alive: {e}")
+
+# ================= CHAT HISTORY FUNCTIONS =================
+
+def start_chat_session(user1, user2):
+    """Start a new chat session"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO chat_history(user1, user2, start_time)
+            VALUES(%s, %s, CURRENT_TIMESTAMP)
+            RETURNING id
+        """, (user1, user2))
+        chat_id = cursor.fetchone()[0]
+        db.commit()
+        return chat_id
+    except Exception as e:
+        logger.error(f"❌ Start chat session error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def end_chat_session(user_id):
+    """End chat session"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, user1, user2
+            FROM chat_history
+            WHERE (user1 = %s OR user2 = %s)
+                AND end_time IS NULL
+            ORDER BY start_time DESC
+            LIMIT 1
+        """, (user_id, user_id))
+        result = cursor.fetchone()
+        if not result:
+            return None
+        chat_id, user1, user2 = result
+        cursor.execute("""
+            UPDATE chat_history 
+            SET end_time = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (chat_id,))
+        db.commit()
+        return chat_id
+    except Exception as e:
+        logger.error(f"❌ End chat session error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_chat_report(chat_id):
+    """Get chat report"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT 
+                id,
+                user1,
+                user2,
+                start_time,
+                end_time,
+                EXTRACT(EPOCH FROM (end_time - start_time)) as duration_seconds
+            FROM chat_history
+            WHERE id = %s
+        """, (chat_id,))
+        result = cursor.fetchone()
+        if not result:
+            return None
+        return {
+            'id': result[0],
+            'user1': result[1],
+            'user2': result[2],
+            'start_time': result[3],
+            'end_time': result[4],
+            'duration': int(result[5] or 0)
+        }
+    except Exception as e:
+        logger.error(f"❌ Get chat report error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_active_chat(user_id):
+    """Check if user has active chat session"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, user1, user2
+            FROM chat_history
+            WHERE (user1 = %s OR user2 = %s)
+                AND end_time IS NULL
+            ORDER BY start_time DESC
+            LIMIT 1
+        """, (user_id, user_id))
+        return cursor.fetchone()
+    except Exception as e:
+        logger.error(f"❌ Get active chat error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
 
 # ================= PREMIUM FUNCTIONS =================
 
@@ -483,8 +621,6 @@ def find_partner(user_id):
     finally:
         cursor.close()
         return_connection(db)
-
-# ================= STOP CHAT =================
 
 def stop_chat(user_id):
     if not DATABASE_URL:

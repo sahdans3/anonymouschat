@@ -3,7 +3,8 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters
+    filters,
+    PreCheckoutQueryHandler
 )
 from flask import Flask
 from threading import Thread
@@ -24,7 +25,9 @@ from app.handlers import (
     premium,
     setpref,
     myprofile,
-    balance
+    balance,
+    pre_checkout_handler,
+    successful_payment_handler
 )
 
 # Flask app untuk health check
@@ -47,33 +50,26 @@ def run_bot():
         print("❌ Error: BOT_TOKEN tidak ditemukan")
         return
 
-    # Inisialisasi database
     init_db()
-    
-    # Start keep-alive thread
     start_keep_alive()
 
-    # Buat aplikasi
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop))
     
-    # Premium handlers
     app.add_handler(CommandHandler("premium", premium))
     app.add_handler(CommandHandler("setpref", setpref))
     app.add_handler(CommandHandler("myprofile", myprofile))
-    
-    # Balance handler
     app.add_handler(CommandHandler("balance", balance))
 
-    # Button handler
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
+
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Media handlers
     app.add_handler(MessageHandler(filters.PHOTO, media_handler))
     app.add_handler(MessageHandler(filters.VIDEO, media_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, media_handler))
@@ -83,7 +79,6 @@ def run_bot():
     app.add_handler(MessageHandler(filters.ANIMATION, media_handler))
     app.add_handler(MessageHandler(filters.VIDEO_NOTE, media_handler))
     
-    # Text message handler
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -91,19 +86,13 @@ def run_bot():
         )
     )
 
-    # Error Handler
     app.add_error_handler(error_handler)
 
     print("🤖 Bot sedang berjalan...")
     app.run_polling()
 
 if __name__ == "__main__":
-    # Jalankan Flask di thread terpisah
     health_thread = Thread(target=run_health_server, daemon=True)
     health_thread.start()
-    
-    # Tunggu sebentar agar Flask siap
     time.sleep(2)
-    
-    # Jalankan bot di thread utama
     run_bot()

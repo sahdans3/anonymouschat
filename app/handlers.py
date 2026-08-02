@@ -21,7 +21,11 @@ from app.database import (
     set_preferred_gender,
     get_user_gender,
     get_premium_status,
-    is_searching
+    is_searching,
+    start_chat_session,
+    end_chat_session,
+    get_chat_report,
+    get_active_chat
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
@@ -31,6 +35,54 @@ PARTNER_FOUND_MESSAGE = (
     "/stop — stop this chat\n\n"
     "https://t.me/Annonymous_Chat_Bot"
 )
+
+# ================= SEND CHAT REPORT =================
+
+async def send_chat_report_to_user(context, user_id, partner_id):
+    """Send chat report to user"""
+    chat_id = end_chat_session(user_id)
+    if chat_id:
+        report = get_chat_report(chat_id)
+        if report:
+            duration = report['duration']
+            minutes = duration // 60
+            seconds = duration % 60
+            duration_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            report_text = (
+                f"📊 *Chat Report*\n\n"
+                f"👤 You: `{user_id}`\n"
+                f"👤 Partner: `{partner_id}`\n"
+                f"⏱️ Duration: {duration_str}\n\n"
+                f"💬 How was your chat?"
+            )
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=report_text,
+                    parse_mode='Markdown',
+                    reply_markup=feedback_keyboard()
+                )
+            except Exception as e:
+                print(f"❌ Send report error: {e}")
+            
+            # Kirim ke admin
+            ADMIN_ID = 6348859633  # Ganti dengan ID admin Anda
+            admin_report = (
+                f"📊 *Chat Report - Admin*\n\n"
+                f"👤 User1: `{report['user1']}`\n"
+                f"👤 User2: `{report['user2']}`\n"
+                f"⏱️ Duration: {duration_str}\n"
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=admin_report,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                print(f"❌ Send admin report error: {e}")
 
 # ================= START =================
 
@@ -44,13 +96,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 Welcome!\n\n"
             "Type your gender: *male* or *female*\n"
             "Type /search to find a partner.\n"
-            "Type /premium to see premium features.",
+            "Type /premium to see premium features.\n"
+            "Type /myprofile to see your profile.",
             parse_mode='Markdown'
         )
     except TelegramError as e:
         print(e)
 
-# ================= PREMIUM =================
+# ================= PREMIUM COMMANDS =================
 
 async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -151,29 +204,33 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     register_user(user_id)
-    clear_user_status(user_id)
     
-    if get_partner(user_id):
-        await update.message.reply_text("💬 You are already chatting.\nUse /next or /stop.")
-        return
+    # Cek apakah user sedang dalam chat
+    partner = get_partner(user_id)
+    if partner:
+        # Kirim report untuk chat sebelumnya
+        await send_chat_report_to_user(context, user_id, partner)
+        stop_chat(user_id)
+        clear_user_status(user_id)
+        await update.message.reply_text("💬 You left your previous chat.\nSearching for new partner...")
+    
+    clear_user_status(user_id)
     
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
-            "⚠️ Set your gender first!\n\n"
-            "Type: *male* or *female*",
+            "⚠️ Set your gender first!\n\nType: *male* or *female*",
             parse_mode='Markdown'
         )
         return
     
-    # 🔥 JOIN QUEUE DAN LANGSUNG CARI PARTNER
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 LANGSUNG cari partner
     partner = find_partner(user_id)
     
     if partner:
+        start_chat_session(user_id, partner)
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
@@ -188,9 +245,11 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     register_user(user_id)
     
     old_partner = get_partner(user_id)
-    stop_chat(user_id)
     
+    # Kirim report untuk chat yang berakhir
     if old_partner:
+        await send_chat_report_to_user(context, user_id, old_partner)
+        
         try:
             await context.bot.send_message(
                 chat_id=old_partner, 
@@ -201,14 +260,16 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"⚠️ Error: {e}")
     
-    # 🔥 JOIN QUEUE DAN LANGSUNG CARI PARTNER
+    stop_chat(user_id)
+    clear_user_status(user_id)
+    
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 LANGSUNG cari partner
     partner = find_partner(user_id)
     
     if partner:
+        start_chat_session(user_id, partner)
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
@@ -221,19 +282,28 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     
-    partner_id = stop_chat(user_id)
+    partner_id = get_partner(user_id)
+    
+    # Kirim report untuk chat yang berakhir
+    if partner_id:
+        await send_chat_report_to_user(context, user_id, partner_id)
+        
+        try:
+            await context.bot.send_message(
+                chat_id=partner_id, 
+                text="😞 Your partner has ended the chat."
+            )
+        except Forbidden:
+            remove_user(partner_id)
+        except Exception as e:
+            print(e)
+    
+    stop_chat(user_id)
     clear_user_status(user_id)
     
     if not partner_id:
         await update.message.reply_text("❌ You are not in a chat.")
         return
-    
-    try:
-        await context.bot.send_message(chat_id=partner_id, text="😞 Your partner has ended the chat.")
-    except Forbidden:
-        remove_user(partner_id)
-    except Exception as e:
-        print(e)
     
     await update.message.reply_text("Chat ended 😞", reply_markup=feedback_keyboard())
 
@@ -455,14 +525,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:
             save_feedback(from_user=user_id, to_user=partner_id, feedback=data)
+            await query.edit_message_text("✅ Thank you for your feedback!")
         except Exception as e:
             print(e)
-    
-    await query.edit_message_text("✅ Thank you for your feedback!")
+    else:
+        await query.edit_message_text("✅ Thank you for your feedback!")
 
 # ================= ERROR =================
 
