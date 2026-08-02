@@ -39,7 +39,7 @@ PARTNER_FOUND_MESSAGE = (
 # ================= SEND CHAT REPORT =================
 
 async def send_chat_report_to_user(context, user_id, partner_id):
-    """Send chat report to BOTH users"""
+    """Send full chat report to BOTH users (NO ADMIN)"""
     chat_id = end_chat_session(user_id)
     if chat_id:
         report = get_chat_report(chat_id)
@@ -57,7 +57,7 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 f"💬 How was your chat?"
             )
             
-            # 🔥 Kirim ke user1
+            # Kirim ke user1
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -68,7 +68,7 @@ async def send_chat_report_to_user(context, user_id, partner_id):
             except Exception as e:
                 print(f"❌ Send report to user1 error: {e}")
             
-            # 🔥 Kirim ke user2 (partner) - dengan report yang sama
+            # Kirim ke user2 (partner)
             try:
                 await context.bot.send_message(
                     chat_id=partner_id,
@@ -78,23 +78,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 )
             except Exception as e:
                 print(f"❌ Send report to user2 error: {e}")
-            
-            # Kirim ke admin
-            ADMIN_ID = 6348859633  # Ganti dengan ID admin Anda
-            admin_report = (
-                f"📊 *Chat Report - Admin*\n\n"
-                f"👤 User1: `{report['user1']}`\n"
-                f"👤 User2: `{report['user2']}`\n"
-                f"⏱️ Duration: {duration_str}\n"
-            )
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=admin_report,
-                    parse_mode='Markdown'
-                )
-            except Exception as e:
-                print(f"❌ Send admin report error: {e}")
 
 # ================= START =================
 
@@ -217,32 +200,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # Cek apakah user sedang dalam chat
     partner = get_partner(user_id)
     if partner:
-        # 🔥 Kirim report ke user
         await send_chat_report_to_user(context, user_id, partner)
-        
-        # 🔥 Kirim report ke partner
-        try:
-            partner_report_text = (
-                f"📊 *Chat Report*\n\n"
-                f"👤 You: `{partner}`\n"
-                f"👤 Partner: `{user_id}`\n"
-                f"💬 Your partner has left the chat.\n\n"
-                f"Please rate your chat experience:"
-            )
-            await context.bot.send_message(
-                chat_id=partner,
-                text=partner_report_text,
-                parse_mode='Markdown',
-                reply_markup=feedback_keyboard()
-            )
-        except Forbidden:
-            remove_user(partner)
-        except Exception as e:
-            print(f"⚠️ Error sending report to partner: {e}")
-        
         stop_chat(user_id)
         clear_user_status(user_id)
         await update.message.reply_text("💬 You left your previous chat.\nSearching for new partner...")
@@ -279,30 +239,18 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     old_partner = get_partner(user_id)
     
-    # Kirim report ke KEDUA user
     if old_partner:
-        # 🔥 Kirim report ke user yang melakukan /next
         await send_chat_report_to_user(context, user_id, old_partner)
         
-        # 🔥 Kirim report ke partner
         try:
-            partner_report_text = (
-                f"📊 *Chat Report*\n\n"
-                f"👤 You: `{old_partner}`\n"
-                f"👤 Partner: `{user_id}`\n"
-                f"💬 Your partner has left the chat.\n\n"
-                f"Please rate your chat experience:"
-            )
             await context.bot.send_message(
-                chat_id=old_partner,
-                text=partner_report_text,
-                parse_mode='Markdown',
-                reply_markup=feedback_keyboard()
+                chat_id=old_partner, 
+                text="😞 Your partner has left the chat."
             )
         except Forbidden:
             remove_user(old_partner)
         except Exception as e:
-            print(f"⚠️ Error sending report to partner: {e}")
+            print(f"⚠️ Error: {e}")
     
     stop_chat(user_id)
     clear_user_status(user_id)
@@ -328,30 +276,18 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     partner_id = get_partner(user_id)
     
-    # Kirim report ke KEDUA user
     if partner_id:
-        # 🔥 Kirim report ke user yang melakukan /stop
         await send_chat_report_to_user(context, user_id, partner_id)
         
-        # 🔥 Kirim report ke partner
         try:
-            partner_report_text = (
-                f"📊 *Chat Report*\n\n"
-                f"👤 You: `{partner_id}`\n"
-                f"👤 Partner: `{user_id}`\n"
-                f"💬 Your partner has ended the chat.\n\n"
-                f"Please rate your chat experience:"
-            )
             await context.bot.send_message(
-                chat_id=partner_id,
-                text=partner_report_text,
-                parse_mode='Markdown',
-                reply_markup=feedback_keyboard()
+                chat_id=partner_id, 
+                text="😞 Your partner has ended the chat."
             )
         except Forbidden:
             remove_user(partner_id)
         except Exception as e:
-            print(f"⚠️ Error sending report to partner: {e}")
+            print(e)
     
     stop_chat(user_id)
     clear_user_status(user_id)
@@ -580,20 +516,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # 🔥 Handle feedback - simpan ke database
-    try:
-        # Coba dapatkan partner terakhir dari database
-        partner_id = get_partner(user_id)
-        if partner_id:
+    # Handle feedback
+    partner_id = get_partner(user_id)
+    if partner_id:
+        try:
             save_feedback(from_user=user_id, to_user=partner_id, feedback=data)
             await query.edit_message_text("✅ Thank you for your feedback!")
-        else:
-            # Jika tidak ada partner, simpan dengan to_user = 0
-            save_feedback(from_user=user_id, to_user=0, feedback=data)
-            await query.edit_message_text("✅ Thank you for your feedback!")
-    except Exception as e:
-        print(f"❌ Save feedback error: {e}")
-        await query.edit_message_text("❌ Failed to save feedback. Please try again.")
+        except Exception as e:
+            print(e)
+    else:
+        await query.edit_message_text("✅ Thank you for your feedback!")
 
 # ================= ERROR =================
 

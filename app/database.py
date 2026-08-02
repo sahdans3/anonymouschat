@@ -164,7 +164,6 @@ def start_keep_alive():
 # ================= CHAT HISTORY FUNCTIONS =================
 
 def start_chat_session(user1, user2):
-    """Start a new chat session"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -189,7 +188,6 @@ def start_chat_session(user1, user2):
         return_connection(db)
 
 def end_chat_session(user_id):
-    """End chat session"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -225,7 +223,6 @@ def end_chat_session(user_id):
         return_connection(db)
 
 def get_chat_report(chat_id):
-    """Get chat report"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -257,31 +254,6 @@ def get_chat_report(chat_id):
         }
     except Exception as e:
         logger.error(f"❌ Get chat report error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_active_chat(user_id):
-    """Check if user has active chat session"""
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            SELECT id, user1, user2
-            FROM chat_history
-            WHERE (user1 = %s OR user2 = %s)
-                AND end_time IS NULL
-            ORDER BY start_time DESC
-            LIMIT 1
-        """, (user_id, user_id))
-        return cursor.fetchone()
-    except Exception as e:
-        logger.error(f"❌ Get active chat error: {e}")
         return None
     finally:
         cursor.close()
@@ -560,7 +532,6 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner - SUPER CEPAT"""
     if not DATABASE_URL:
         return None
     
