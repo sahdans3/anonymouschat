@@ -84,9 +84,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     register_user(user_id)
+    
+    # 🔥 Cek premium untuk tag
+    is_premium = check_premium(user_id)
+    premium_tag = "⭐ *Premium*" if is_premium else ""
+    
     try:
         await update.message.reply_text(
-            "👋 Welcome!\n\n"
+            f"👋 Welcome!\n\n"
+            f"{premium_tag}\n\n"
             "Type your gender: *male* or *female*\n"
             "Type /search to find a partner.\n"
             "Type /premium to see premium features.\n"
@@ -162,11 +168,16 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, expiry = get_premium_status(user_id)
     partner = get_partner(user_id)
     
+    # 🔥 Tag Premium
+    premium_tag = "⭐ *Premium*" if is_premium else "❌ Free"
+    expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
+    
     await update.message.reply_text(
         f"👤 *Profile*\n\n"
+        f"{premium_tag}\n\n"
         f"Gender: {gender or 'Not set'}\n"
         f"Preferred: {preferred or 'Not set'}\n"
-        f"Premium: {'✅ Active' if is_premium else '❌ Inactive'}\n"
+        f"Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}\n"
         f"Partner: {partner if partner else 'None'}",
         parse_mode='Markdown'
     )
@@ -361,6 +372,7 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 replied_text = "📎 Media"
         
+        # 🔥 CEK PREMIUM - Tambahkan tag di atas reply
         is_premium = check_premium(user_id)
         
         if is_premium:
@@ -410,6 +422,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         is_reply = message.reply_to_message is not None
         
+        # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
         prefix_text = "⭐ *Premium*\n\n" if is_premium else ""
         
@@ -504,6 +517,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text.lower().strip()
     
+    # Auto set gender (male/female)
     if text in ['male', 'female']:
         partner_id = get_partner(user_id)
         if partner_id:
@@ -525,6 +539,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to set gender.")
         return
     
+    # Get partner
     partner_id = get_partner(user_id)
     
     if partner_id is None:
@@ -538,10 +553,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Not in a chat. Use /search.")
         return
     
+    # 🔥 CEK PREMIUM - Tambahkan tag di atas pesan
     is_premium = check_premium(user_id)
     
     try:
         if is_premium:
+            # Kirim pesan dengan tag premium di atasnya
             await context.bot.send_message(
                 chat_id=partner_id,
                 text=f"⭐ *Premium*\n\n{update.message.text}",
@@ -597,6 +614,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:
