@@ -44,7 +44,7 @@ PARTNER_FOUND_MESSAGE = (
     "https://t.me/Annonymous_Chat_Bot"
 )
 
-FREE_USER_LIMIT = 50
+FREE_USER_LIMIT = 20
 COOLDOWN_HOURS = 19
 
 # ================= SEND CHAT REPORT =================

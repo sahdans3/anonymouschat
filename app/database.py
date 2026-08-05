@@ -426,7 +426,7 @@ def get_last_partner_reset(user_id):
         cursor.close()
         return_connection(db)
 
-def check_daily_limit(user_id, limit=50, cooldown_hours=19):
+def check_daily_limit(user_id, limit=20, cooldown_hours=19):
     if not DATABASE_URL:
         return True, 0, None
     
