@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import Forbidden, BadRequest, TelegramError
 import asyncio
 import io
+import traceback
 from datetime import datetime
 
 from app.database import (
@@ -175,22 +176,36 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= BALANCE =================
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cek saldo Stars bot"""
     if update.message is None:
         return
+    
+    user_id = update.effective_user.id
+    
     try:
         star_balance = await context.bot.get_my_star_balance()
         await update.message.reply_text(
             f"⭐ *Saldo Stars Bot*\n\n"
-            f"Total: *{star_balance}* ⭐\n\n"
+            f"Total Stars: *{star_balance}* ⭐\n\n"
             f"💡 1 Star ≈ $0.013\n"
             f"📤 Minimal withdraw: 1000 Stars\n"
             f"🔗 Tarik di: https://fragment.com",
             parse_mode='Markdown'
         )
+    except AttributeError as e:
+        # Versi PTB terlalu lama
+        print(f"❌ AttributeError: {e}")
+        await update.message.reply_text(
+            "❌ Bot ini menggunakan versi lama.\n"
+            "Mohon hubungi admin untuk update."
+        )
     except Exception as e:
         print(f"❌ Balance error: {e}")
-        await update.message.reply_text("❌ Gagal mengambil saldo Stars.")
-
+        traceback.print_exc()
+        await update.message.reply_text(
+            "❌ Gagal mengambil saldo Stars.\n"
+            f"Error: {str(e)[:100]}"
+        )
 # ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
