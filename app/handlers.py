@@ -250,7 +250,10 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
-        await update.message.reply_text("🔍 Waiting for another user...")
+        # 🔥 Kirim pesan "Waiting" dan simpan message_id
+        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
+        context.user_data['waiting_message_id'] = waiting_msg.message_id
+        context.user_data['waiting_chat_id'] = waiting_msg.chat_id
 
 # ================= NEXT =================
 
@@ -285,10 +288,27 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if partner:
         start_chat_session(user_id, partner)
+        
+        # 🔥 Hapus pesan "Waiting" jika ada
+        if 'waiting_message_id' in context.user_data:
+            try:
+                await context.bot.delete_message(
+                    chat_id=context.user_data['waiting_chat_id'],
+                    message_id=context.user_data['waiting_message_id']
+                )
+            except Exception as e:
+                print(f"⚠️ Error deleting waiting message: {e}")
+            finally:
+                context.user_data.pop('waiting_message_id', None)
+                context.user_data.pop('waiting_chat_id', None)
+        
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
-        await update.message.reply_text("🔍 Waiting for another user...")
+        # 🔥 Kirim pesan "Waiting" dan simpan message_id
+        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
+        context.user_data['waiting_message_id'] = waiting_msg.message_id
+        context.user_data['waiting_chat_id'] = waiting_msg.chat_id
 
 # ================= STOP =================
 
@@ -298,6 +318,19 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     partner_id = get_partner(user_id)
+    
+    # 🔥 Hapus pesan "Waiting" jika ada
+    if 'waiting_message_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=context.user_data['waiting_chat_id'],
+                message_id=context.user_data['waiting_message_id']
+            )
+        except Exception as e:
+            print(f"⚠️ Error deleting waiting message: {e}")
+        finally:
+            context.user_data.pop('waiting_message_id', None)
+            context.user_data.pop('waiting_chat_id', None)
     
     if partner_id:
         await send_chat_report_to_user(context, user_id, partner_id)
