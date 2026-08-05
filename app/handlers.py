@@ -363,10 +363,30 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 replied_text = "📎 Media"
         
-        if replied_text:
-            await context.bot.send_message(chat_id=partner_id, text=f"⬆️ {replied_text}")
+        # 🔥 CEK PREMIUM - Tambahkan label di atas reply
+        is_premium = check_premium(user_id)
         
-        await context.bot.send_message(chat_id=partner_id, text=message.text)
+        if is_premium:
+            # Kirim dengan label premium
+            if replied_text:
+                await context.bot.send_message(
+                    chat_id=partner_id,
+                    text=f"⭐ *Premium*\n\n⬆️ {replied_text}"
+                )
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=f"⭐ *Premium*\n\n{message.text}"
+            )
+        else:
+            if replied_text:
+                await context.bot.send_message(
+                    chat_id=partner_id,
+                    text=f"⬆️ {replied_text}"
+                )
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=message.text
+            )
         
     except Forbidden:
         stop_chat(user_id)
@@ -392,6 +412,10 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         is_reply = message.reply_to_message is not None
         
+        # 🔥 CEK PREMIUM
+        is_premium = check_premium(user_id)
+        prefix_text = "⭐ *Premium*\n\n" if is_premium else ""
+        
         if is_reply:
             reply_to = message.reply_to_message
             replied_text = ""
@@ -405,30 +429,56 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 replied_text = "📎 Media"
             
             if replied_text:
-                await context.bot.send_message(chat_id=partner_id, text=f"⬆️ {replied_text}")
+                await context.bot.send_message(
+                    chat_id=partner_id,
+                    text=f"{prefix_text}⬆️ {replied_text}"
+                )
+        
+        caption = message.caption or ""
+        if is_premium:
+            caption = f"⭐ *Premium*\n\n{caption}"
         
         if message.photo:
             photo = message.photo[-1]
             file = await context.bot.get_file(photo.file_id)
             file_bytes = await file.download_as_bytearray()
-            await context.bot.send_photo(chat_id=partner_id, photo=io.BytesIO(file_bytes), caption=message.caption)
+            await context.bot.send_photo(
+                chat_id=partner_id,
+                photo=io.BytesIO(file_bytes),
+                caption=caption
+            )
         elif message.video:
             video = message.video
             file = await context.bot.get_file(video.file_id)
             file_bytes = await file.download_as_bytearray()
-            await context.bot.send_video(chat_id=partner_id, video=io.BytesIO(file_bytes), caption=message.caption)
+            await context.bot.send_video(
+                chat_id=partner_id,
+                video=io.BytesIO(file_bytes),
+                caption=caption
+            )
         elif message.sticker:
-            await context.bot.send_sticker(chat_id=partner_id, sticker=message.sticker.file_id)
+            await context.bot.send_sticker(
+                chat_id=partner_id,
+                sticker=message.sticker.file_id
+            )
         elif message.voice:
             voice = message.voice
             file = await context.bot.get_file(voice.file_id)
             file_bytes = await file.download_as_bytearray()
-            await context.bot.send_voice(chat_id=partner_id, voice=io.BytesIO(file_bytes))
+            await context.bot.send_voice(
+                chat_id=partner_id,
+                voice=io.BytesIO(file_bytes),
+                caption=caption
+            )
         elif message.animation:
             animation = message.animation
             file = await context.bot.get_file(animation.file_id)
             file_bytes = await file.download_as_bytearray()
-            await context.bot.send_animation(chat_id=partner_id, animation=io.BytesIO(file_bytes))
+            await context.bot.send_animation(
+                chat_id=partner_id,
+                animation=io.BytesIO(file_bytes),
+                caption=caption
+            )
             
     except Forbidden:
         stop_chat(user_id)
@@ -437,61 +487,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Failed to send media.")
-
-# ================= MESSAGE =================
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    
-    if update.message.reply_to_message is not None:
-        await reply_handler(update, context)
-        return
-    
-    text = update.message.text.lower().strip()
-    if text in ['male', 'female']:
-        partner_id = get_partner(user_id)
-        if partner_id:
-            try:
-                await context.bot.send_message(chat_id=partner_id, text=update.message.text)
-                return
-            except Exception as e:
-                print(f"❌ Send error: {e}")
-                return
-        
-        register_user(user_id)
-        if set_gender(user_id, text):
-            await update.message.reply_text(
-                f"✅ Gender set to: *{text}*\n\n"
-                "Now type /search to find a partner.",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Failed to set gender.")
-        return
-    
-    partner_id = get_partner(user_id)
-    
-    if partner_id is None:
-        gender, _ = get_user_gender(user_id)
-        if not gender:
-            await update.message.reply_text(
-                "⚠️ Set your gender first!\n\nType: *male* or *female*",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Not in a chat. Use /search.")
-        return
-    
-    try:
-        await context.bot.send_message(chat_id=partner_id, text=update.message.text)
-    except Forbidden:
-        stop_chat(user_id)
-        remove_user(partner_id)
-        await update.message.reply_text("❌ Partner left. Use /search.")
-    except Exception as e:
-        print(f"❌ Send error: {e}")
 
 # ================= BUTTON =================
 
