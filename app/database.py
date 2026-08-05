@@ -4,6 +4,7 @@ import psycopg2.pool
 import threading
 import time
 import logging
+from datetime import datetime
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -92,6 +93,8 @@ def init_db():
             preferred_gender VARCHAR(10) DEFAULT NULL,
             premium INT DEFAULT 0,
             premium_expiry TIMESTAMP DEFAULT NULL,
+            partner_count INT DEFAULT 0,
+            last_partner_reset TIMESTAMP DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -338,6 +341,151 @@ def get_waiting_message(user_id):
         cursor.close()
         return_connection(db)
 
+# ================= PARTNER COUNT =================
+
+def increment_partner_count(user_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            UPDATE users 
+            SET partner_count = partner_count + 1 
+            WHERE user_id = %s
+        """, (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Increment partner count error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_partner_count(user_id):
+    if not DATABASE_URL:
+        return 0
+    db = connect_db()
+    if not db:
+        return 0
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT partner_count FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0] or 0
+        return 0
+    except Exception as e:
+        logger.error(f"❌ Get partner count error: {e}")
+        return 0
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def reset_partner_count(user_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            UPDATE users 
+            SET partner_count = 0,
+                last_partner_reset = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Reset partner count error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_last_partner_reset(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT last_partner_reset FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+        return None
+    except Exception as e:
+        logger.error(f"❌ Get last reset error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def check_daily_limit(user_id, limit=50, cooldown_hours=19):
+    if not DATABASE_URL:
+        return True, 0, None
+    
+    db = connect_db()
+    if not db:
+        return True, 0, None
+    
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        is_premium = result and result[0] == 1
+        
+        if is_premium:
+            cursor.close()
+            return_connection(db)
+            return True, 0, None
+        
+        cursor.execute("SELECT partner_count, last_partner_reset FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.close()
+            return_connection(db)
+            return True, 0, None
+        
+        partner_count = result[0] or 0
+        last_reset = result[1]
+        
+        # Jika belum pernah reset, set sekarang
+        if not last_reset:
+            cursor.close()
+            return_connection(db)
+            reset_partner_count(user_id)
+            return True, 0, None
+        
+        # Cek apakah sudah lewat 19 jam
+        elapsed = (datetime.now() - last_reset).total_seconds() / 3600
+        if elapsed >= cooldown_hours:
+            reset_partner_count(user_id)
+            cursor.close()
+            return_connection(db)
+            return True, 0, None
+        
+        if partner_count >= limit:
+            remaining_hours = int(cooldown_hours - elapsed)
+            cursor.close()
+            return_connection(db)
+            return False, partner_count, remaining_hours
+        
+        cursor.close()
+        return_connection(db)
+        return True, partner_count, None
+        
+    except Exception as e:
+        logger.error(f"❌ Check daily limit error: {e}")
+        cursor.close()
+        return_connection(db)
+        return True, 0, None
+
 # ================= PREMIUM =================
 
 def check_premium(user_id):
@@ -381,11 +529,13 @@ def set_premium(user_id, days=30):
         cursor.execute("""
             UPDATE users 
             SET premium=1, 
-                premium_expiry=CURRENT_TIMESTAMP + INTERVAL '%s days'
+                premium_expiry=CURRENT_TIMESTAMP + INTERVAL '%s days',
+                partner_count = 0,
+                last_partner_reset = NULL
             WHERE user_id=%s
         """, (days, user_id))
         db.commit()
-        logger.info(f"✅ User {user_id} set as premium for {days} days")
+        logger.info(f"✅ User {user_id} set as premium for {days} days, partner count reset")
         return True
     except Exception as e:
         logger.error(f"❌ Set premium error: {e}")

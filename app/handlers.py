@@ -4,7 +4,7 @@ from telegram.error import Forbidden, BadRequest, TelegramError
 import asyncio
 import io
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.database import (
     register_user,
@@ -28,7 +28,12 @@ from app.database import (
     get_chat_report,
     save_waiting_message,
     delete_waiting_message,
-    get_waiting_message
+    get_waiting_message,
+    increment_partner_count,
+    get_partner_count,
+    reset_partner_count,
+    get_last_partner_reset,
+    check_daily_limit
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
@@ -38,6 +43,9 @@ PARTNER_FOUND_MESSAGE = (
     "/stop — stop this chat\n\n"
     "https://t.me/Annonymous_Chat_Bot"
 )
+
+FREE_USER_LIMIT = 50
+COOLDOWN_HOURS = 19
 
 # ================= SEND CHAT REPORT =================
 
@@ -153,7 +161,9 @@ async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🌟 *Premium*\n\nStatus: {status}{expiry_text}\n\n"
         "🎯 Filter gender\n"
-        "🔝 Priority matching\n\n"
+        "🔝 Priority matching\n"
+        "♾️ Unlimited partners\n"
+        "⏳ No daily limit\n\n"
         "Choose plan:",
         parse_mode='Markdown',
         reply_markup=premium_keyboard()
@@ -168,16 +178,37 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender, preferred = get_user_gender(user_id)
     is_premium, expiry = get_premium_status(user_id)
     partner = get_partner(user_id)
+    partner_count = get_partner_count(user_id)
+    last_reset = get_last_partner_reset(user_id)
     
     premium_tag = "⭐ *Premium*" if is_premium else "❌ Free"
     expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
+    
+    limit_info = ""
+    if not is_premium:
+        remaining = FREE_USER_LIMIT - partner_count
+        limit_info = f"\n📊 Today: {partner_count}/{FREE_USER_LIMIT}"
+        if remaining <= 5:
+            limit_info += f" ⚠️ {remaining} remaining!"
+        
+        if partner_count >= FREE_USER_LIMIT and last_reset:
+            reset_time = last_reset + timedelta(hours=COOLDOWN_HOURS)
+            now = datetime.now()
+            if reset_time > now:
+                remaining_time = reset_time - now
+                hours = remaining_time.total_seconds() // 3600
+                minutes = (remaining_time.total_seconds() % 3600) // 60
+                limit_info += f"\n⏳ Reset in: {int(hours)}h {int(minutes)}m"
+    else:
+        limit_info = f"\n📊 Partners: {partner_count} ♾️ (Unlimited)"
     
     await update.message.reply_text(
         f"👤 *Profile*\n\n"
         f"{premium_tag}\n\n"
         f"Gender: {gender or 'Not set'}\n"
         f"Preferred: {preferred or 'Not set'}\n"
-        f"Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}\n"
+        f"Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}"
+        f"{limit_info}\n"
         f"Partner: {partner if partner else 'None'}",
         parse_mode='Markdown'
     )
@@ -217,7 +248,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= DELETE WAITING MESSAGE =================
 
 async def delete_waiting_message_from_db(context, user_id):
-    """Delete waiting message from database and Telegram"""
     waiting_info = delete_waiting_message(user_id)
     if waiting_info:
         chat_id, message_id = waiting_info
@@ -239,6 +269,21 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    # CEK DAILY LIMIT
+    can_search, count, remaining_hours = check_daily_limit(user_id)
+    if not can_search:
+        hours = remaining_hours
+        await update.message.reply_text(
+            f"🚫 *Daily Limit Reached*\n\n"
+            f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
+            f"⏳ Please wait *{hours} hours* before searching again.\n\n"
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
+            parse_mode='Markdown',
+            reply_markup=premium_keyboard()
+        )
+        return
+    
     partner = get_partner(user_id)
     if partner:
         await send_chat_report_to_user(context, user_id, partner)
@@ -256,6 +301,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    if not check_premium(user_id):
+        partner_count = get_partner_count(user_id)
+        remaining = FREE_USER_LIMIT - partner_count
+        if remaining <= 5 and remaining > 0:
+            await update.message.reply_text(
+                f"⚠️ *Free User Limit*\n\n"
+                f"You have {remaining} free partner searches remaining today.\n"
+                f"Type /premium to upgrade for unlimited access.",
+                parse_mode='Markdown'
+            )
+    
     set_searching(user_id, 1)
     join_queue(user_id)
     
@@ -263,9 +319,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if partner:
         start_chat_session(user_id, partner)
-        
-        # Hapus waiting message partner
         await delete_waiting_message_from_db(context, partner)
+        increment_partner_count(user_id)
+        increment_partner_count(partner)
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
@@ -280,6 +336,21 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     register_user(user_id)
+    
+    # CEK DAILY LIMIT
+    can_search, count, remaining_hours = check_daily_limit(user_id)
+    if not can_search:
+        hours = remaining_hours
+        await update.message.reply_text(
+            f"🚫 *Daily Limit Reached*\n\n"
+            f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
+            f"⏳ Please wait *{hours} hours* before searching again.\n\n"
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
+            parse_mode='Markdown',
+            reply_markup=premium_keyboard()
+        )
+        return
     
     old_partner = get_partner(user_id)
     
@@ -306,10 +377,10 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if partner:
         start_chat_session(user_id, partner)
-        
-        # Hapus waiting message user dan partner
         await delete_waiting_message_from_db(context, user_id)
         await delete_waiting_message_from_db(context, partner)
+        increment_partner_count(user_id)
+        increment_partner_count(partner)
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
@@ -366,6 +437,8 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             f"✅ *Premium Active!* 🎉\n\n"
             f"Premium {days} hari aktif!\n"
             "🎯 Filter gender unlocked!\n"
+            "♾️ Unlimited partners!\n"
+            "⏳ No daily limit!\n"
             "Use /setpref to set preferred gender.",
             parse_mode='Markdown'
         )
@@ -618,7 +691,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💳 *Cara Bayar*\n\n"
                 "1. Pilih paket\n"
                 "2. Bayar dengan Telegram Stars\n"
-                "3. Premium aktif!",
+                "3. Premium aktif!\n"
+                "♾️ Unlimited partners!\n"
+                "⏳ No daily limit!",
                 parse_mode='Markdown',
                 reply_markup=premium_keyboard()
             )
@@ -629,7 +704,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_invoice(
             chat_id=user_id,
             title=f"Premium {days} Hari",
-            description=f"Premium {days} hari!",
+            description=f"Premium {days} hari!\n♾️ Unlimited partners!\n⏳ No daily limit!",
             payload=f"premium_{days}",
             provider_token="",
             currency="XTR",
