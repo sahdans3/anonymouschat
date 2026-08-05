@@ -30,7 +30,6 @@ from app.handlers import (
     successful_payment_handler
 )
 
-# Flask app untuk health check
 flask_app = Flask(__name__)
 
 @flask_app.route('/')

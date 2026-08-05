@@ -25,7 +25,10 @@ from app.database import (
     is_searching,
     start_chat_session,
     end_chat_session,
-    get_chat_report
+    get_chat_report,
+    save_waiting_message,
+    delete_waiting_message,
+    get_waiting_message
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
@@ -39,7 +42,6 @@ PARTNER_FOUND_MESSAGE = (
 # ================= SEND CHAT REPORT =================
 
 async def send_chat_report_to_user(context, user_id, partner_id):
-    """Send full chat report to BOTH users (NO ADMIN)"""
     chat_id = end_chat_session(user_id)
     if chat_id:
         report = get_chat_report(chat_id)
@@ -85,7 +87,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # 🔥 Cek premium untuk tag
     is_premium = check_premium(user_id)
     premium_tag = "⭐ *Premium*" if is_premium else ""
     
@@ -168,7 +169,6 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, expiry = get_premium_status(user_id)
     partner = get_partner(user_id)
     
-    # 🔥 Tag Premium
     premium_tag = "⭐ *Premium*" if is_premium else "❌ Free"
     expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
     
@@ -185,7 +185,6 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= BALANCE =================
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cek saldo Stars bot"""
     if update.message is None:
         return
     
@@ -214,6 +213,23 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Gagal mengambil saldo Stars.\n"
             f"Error: {str(e)[:100]}"
         )
+
+# ================= DELETE WAITING MESSAGE =================
+
+async def delete_waiting_message_from_db(context, user_id):
+    """Delete waiting message from database and Telegram"""
+    waiting_info = delete_waiting_message(user_id)
+    if waiting_info:
+        chat_id, message_id = waiting_info
+        try:
+            await context.bot.delete_message(
+                chat_id=chat_id,
+                message_id=message_id
+            )
+            return True
+        except Exception as e:
+            print(f"⚠️ Error deleting waiting message: {e}")
+    return False
 
 # ================= SEARCH =================
 
@@ -247,13 +263,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if partner:
         start_chat_session(user_id, partner)
+        
+        # Hapus waiting message partner
+        await delete_waiting_message_from_db(context, partner)
+        
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
-        # 🔥 Kirim pesan "Waiting" dan simpan message_id
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
-        context.user_data['waiting_message_id'] = waiting_msg.message_id
-        context.user_data['waiting_chat_id'] = waiting_msg.chat_id
+        save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= NEXT =================
 
@@ -289,26 +307,15 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner:
         start_chat_session(user_id, partner)
         
-        # 🔥 Hapus pesan "Waiting" jika ada
-        if 'waiting_message_id' in context.user_data:
-            try:
-                await context.bot.delete_message(
-                    chat_id=context.user_data['waiting_chat_id'],
-                    message_id=context.user_data['waiting_message_id']
-                )
-            except Exception as e:
-                print(f"⚠️ Error deleting waiting message: {e}")
-            finally:
-                context.user_data.pop('waiting_message_id', None)
-                context.user_data.pop('waiting_chat_id', None)
+        # Hapus waiting message user dan partner
+        await delete_waiting_message_from_db(context, user_id)
+        await delete_waiting_message_from_db(context, partner)
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
-        # 🔥 Kirim pesan "Waiting" dan simpan message_id
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
-        context.user_data['waiting_message_id'] = waiting_msg.message_id
-        context.user_data['waiting_chat_id'] = waiting_msg.chat_id
+        save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= STOP =================
 
@@ -317,20 +324,9 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     
-    partner_id = get_partner(user_id)
+    await delete_waiting_message_from_db(context, user_id)
     
-    # 🔥 Hapus pesan "Waiting" jika ada
-    if 'waiting_message_id' in context.user_data:
-        try:
-            await context.bot.delete_message(
-                chat_id=context.user_data['waiting_chat_id'],
-                message_id=context.user_data['waiting_message_id']
-            )
-        except Exception as e:
-            print(f"⚠️ Error deleting waiting message: {e}")
-        finally:
-            context.user_data.pop('waiting_message_id', None)
-            context.user_data.pop('waiting_chat_id', None)
+    partner_id = get_partner(user_id)
     
     if partner_id:
         await send_chat_report_to_user(context, user_id, partner_id)
@@ -378,8 +374,6 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 
 # ================= REPLY =================
 
-# ================= REPLY =================
-
 async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return
@@ -407,10 +401,8 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 replied_text = "📎 Media"
         
-        # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
         
-        # Kirim reply preview
         if replied_text:
             await context.bot.send_message(
                 chat_id=partner_id,
@@ -418,13 +410,11 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         if is_premium:
-            # Kirim tag premium sebagai pesan terpisah
             await context.bot.send_message(
                 chat_id=partner_id,
                 text="⭐ *Premium*",
                 parse_mode='Markdown'
             )
-            # Kirim pesan balasan
             await context.bot.send_message(
                 chat_id=partner_id,
                 text=message.text
@@ -445,8 +435,6 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MEDIA =================
 
-# ================= MEDIA =================
-
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return
@@ -461,7 +449,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         is_reply = message.reply_to_message is not None
         
-        # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
         
         if is_reply:
@@ -484,7 +471,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         caption = message.caption or ""
         
-        # Jika premium, kirim tag terpisah
         if is_premium:
             await context.bot.send_message(
                 chat_id=partner_id,
@@ -499,8 +485,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(
                 chat_id=partner_id,
                 photo=io.BytesIO(file_bytes),
-                caption=caption,
-                parse_mode='Markdown'
+                caption=caption
             )
         elif message.video:
             video = message.video
@@ -509,8 +494,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_video(
                 chat_id=partner_id,
                 video=io.BytesIO(file_bytes),
-                caption=caption,
-                parse_mode='Markdown'
+                caption=caption
             )
         elif message.sticker:
             await context.bot.send_sticker(
@@ -524,8 +508,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_voice(
                 chat_id=partner_id,
                 voice=io.BytesIO(file_bytes),
-                caption=caption,
-                parse_mode='Markdown'
+                caption=caption
             )
         elif message.animation:
             animation = message.animation
@@ -534,8 +517,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_animation(
                 chat_id=partner_id,
                 animation=io.BytesIO(file_bytes),
-                caption=caption,
-                parse_mode='Markdown'
+                caption=caption
             )
             
     except Forbidden:
@@ -546,12 +528,9 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Failed to send media.")
 
-# ================= MESSAGE HANDLER =================
-
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGE =================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages - with premium tag as separate message"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -562,7 +541,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text.lower().strip()
     
-    # Auto set gender (male/female)
     if text in ['male', 'female']:
         partner_id = get_partner(user_id)
         if partner_id:
@@ -584,7 +562,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to set gender.")
         return
     
-    # Get partner
     partner_id = get_partner(user_id)
     
     if partner_id is None:
@@ -598,18 +575,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Not in a chat. Use /search.")
         return
     
-    # 🔥 CEK PREMIUM - Kirim tag sebagai pesan terpisah
     is_premium = check_premium(user_id)
     
     try:
         if is_premium:
-            # Kirim tag premium sebagai pesan terpisah
             await context.bot.send_message(
                 chat_id=partner_id,
                 text="⭐ *Premium*",
                 parse_mode='Markdown'
             )
-            # Kirim pesan asli
             await context.bot.send_message(
                 chat_id=partner_id,
                 text=update.message.text
@@ -664,7 +638,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:

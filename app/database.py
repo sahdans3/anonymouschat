@@ -127,6 +127,15 @@ def init_db():
         )
     """)
     
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS waiting_messages (
+            user_id BIGINT PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            message_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     db.commit()
     cursor.close()
     return_connection(db)
@@ -161,7 +170,7 @@ def start_keep_alive():
     except Exception as e:
         logger.error(f"⚠️ Failed to start keep-alive: {e}")
 
-# ================= CHAT HISTORY FUNCTIONS =================
+# ================= CHAT HISTORY =================
 
 def start_chat_session(user1, user2):
     if not DATABASE_URL:
@@ -259,7 +268,77 @@ def get_chat_report(chat_id):
         cursor.close()
         return_connection(db)
 
-# ================= PREMIUM FUNCTIONS =================
+# ================= WAITING MESSAGES =================
+
+def save_waiting_message(user_id, chat_id, message_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO waiting_messages (user_id, chat_id, message_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                chat_id = EXCLUDED.chat_id,
+                message_id = EXCLUDED.message_id
+        """, (user_id, chat_id, message_id))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Save waiting message error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def delete_waiting_message(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            DELETE FROM waiting_messages
+            WHERE user_id = %s
+            RETURNING chat_id, message_id
+        """, (user_id,))
+        result = cursor.fetchone()
+        db.commit()
+        return result
+    except Exception as e:
+        logger.error(f"❌ Delete waiting message error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_waiting_message(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT chat_id, message_id
+            FROM waiting_messages
+            WHERE user_id = %s
+        """, (user_id,))
+        return cursor.fetchone()
+    except Exception as e:
+        logger.error(f"❌ Get waiting message error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= PREMIUM =================
 
 def check_premium(user_id):
     if not DATABASE_URL:
@@ -396,7 +475,7 @@ def get_premium_status(user_id):
         cursor.close()
         return_connection(db)
 
-# ================= USER FUNCTIONS =================
+# ================= USER =================
 
 def register_user(user_id):
     if not DATABASE_URL:
