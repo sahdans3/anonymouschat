@@ -25,7 +25,7 @@ from app.database import (
     is_searching,
     start_chat_session,
     end_chat_session,
-    get_chat_report,
+    get_chat_report
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
@@ -57,7 +57,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 f"💬 How was your chat?"
             )
             
-            # Kirim ke user1
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -68,7 +67,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
             except Exception as e:
                 print(f"❌ Send report to user1 error: {e}")
             
-            # Kirim ke user2 (partner)
             try:
                 await context.bot.send_message(
                     chat_id=partner_id,
@@ -193,7 +191,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
     except AttributeError as e:
-        # Versi PTB terlalu lama
         print(f"❌ AttributeError: {e}")
         await update.message.reply_text(
             "❌ Bot ini menggunakan versi lama.\n"
@@ -206,6 +203,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Gagal mengambil saldo Stars.\n"
             f"Error: {str(e)[:100]}"
         )
+
 # ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,19 +361,19 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 replied_text = "📎 Media"
         
-        # 🔥 CEK PREMIUM - Tambahkan label di atas reply
         is_premium = check_premium(user_id)
         
         if is_premium:
-            # Kirim dengan label premium
             if replied_text:
                 await context.bot.send_message(
                     chat_id=partner_id,
-                    text=f"⭐ *Premium*\n\n⬆️ {replied_text}"
+                    text=f"⭐ *Premium*\n\n⬆️ {replied_text}",
+                    parse_mode='Markdown'
                 )
             await context.bot.send_message(
                 chat_id=partner_id,
-                text=f"⭐ *Premium*\n\n{message.text}"
+                text=f"⭐ *Premium*\n\n{message.text}",
+                parse_mode='Markdown'
             )
         else:
             if replied_text:
@@ -412,7 +410,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         is_reply = message.reply_to_message is not None
         
-        # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
         prefix_text = "⭐ *Premium*\n\n" if is_premium else ""
         
@@ -431,7 +428,8 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if replied_text:
                 await context.bot.send_message(
                     chat_id=partner_id,
-                    text=f"{prefix_text}⬆️ {replied_text}"
+                    text=f"{prefix_text}⬆️ {replied_text}",
+                    parse_mode='Markdown'
                 )
         
         caption = message.caption or ""
@@ -445,7 +443,8 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(
                 chat_id=partner_id,
                 photo=io.BytesIO(file_bytes),
-                caption=caption
+                caption=caption,
+                parse_mode='Markdown'
             )
         elif message.video:
             video = message.video
@@ -454,7 +453,8 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_video(
                 chat_id=partner_id,
                 video=io.BytesIO(file_bytes),
-                caption=caption
+                caption=caption,
+                parse_mode='Markdown'
             )
         elif message.sticker:
             await context.bot.send_sticker(
@@ -468,7 +468,8 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_voice(
                 chat_id=partner_id,
                 voice=io.BytesIO(file_bytes),
-                caption=caption
+                caption=caption,
+                parse_mode='Markdown'
             )
         elif message.animation:
             animation = message.animation
@@ -477,7 +478,8 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_animation(
                 chat_id=partner_id,
                 animation=io.BytesIO(file_bytes),
-                caption=caption
+                caption=caption,
+                parse_mode='Markdown'
             )
             
     except Forbidden:
@@ -487,6 +489,76 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Failed to send media.")
+
+# ================= MESSAGE HANDLER =================
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text messages - with premium label"""
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    
+    if update.message.reply_to_message is not None:
+        await reply_handler(update, context)
+        return
+    
+    text = update.message.text.lower().strip()
+    
+    if text in ['male', 'female']:
+        partner_id = get_partner(user_id)
+        if partner_id:
+            try:
+                await context.bot.send_message(chat_id=partner_id, text=update.message.text)
+                return
+            except Exception as e:
+                print(f"❌ Send error: {e}")
+                return
+        
+        register_user(user_id)
+        if set_gender(user_id, text):
+            await update.message.reply_text(
+                f"✅ Gender set to: *{text}*\n\n"
+                "Now type /search to find a partner.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Failed to set gender.")
+        return
+    
+    partner_id = get_partner(user_id)
+    
+    if partner_id is None:
+        gender, _ = get_user_gender(user_id)
+        if not gender:
+            await update.message.reply_text(
+                "⚠️ Set your gender first!\n\nType: *male* or *female*",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Not in a chat. Use /search.")
+        return
+    
+    is_premium = check_premium(user_id)
+    
+    try:
+        if is_premium:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=f"⭐ *Premium*\n\n{update.message.text}",
+                parse_mode='Markdown'
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=update.message.text
+            )
+    except Forbidden:
+        stop_chat(user_id)
+        remove_user(partner_id)
+        await update.message.reply_text("❌ Partner left. Use /search.")
+    except Exception as e:
+        print(f"❌ Send error: {e}")
+        await update.message.reply_text("❌ Failed to send message.")
 
 # ================= BUTTON =================
 
@@ -525,7 +597,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:
