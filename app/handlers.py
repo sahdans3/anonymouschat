@@ -345,6 +345,8 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 
 # ================= REPLY =================
 
+# ================= REPLY =================
+
 async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return
@@ -372,27 +374,29 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 replied_text = "📎 Media"
         
-        # 🔥 CEK PREMIUM - Tambahkan tag di atas reply
+        # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
         
-        if is_premium:
-            if replied_text:
-                await context.bot.send_message(
-                    chat_id=partner_id,
-                    text=f"⭐ *Premium*\n\n⬆️ {replied_text}",
-                    parse_mode='Markdown'
-                )
+        # Kirim reply preview
+        if replied_text:
             await context.bot.send_message(
                 chat_id=partner_id,
-                text=f"⭐ *Premium*\n\n{message.text}",
+                text=f"⬆️ {replied_text}"
+            )
+        
+        if is_premium:
+            # Kirim tag premium sebagai pesan terpisah
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text="⭐ *Premium*",
                 parse_mode='Markdown'
             )
+            # Kirim pesan balasan
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=message.text
+            )
         else:
-            if replied_text:
-                await context.bot.send_message(
-                    chat_id=partner_id,
-                    text=f"⬆️ {replied_text}"
-                )
             await context.bot.send_message(
                 chat_id=partner_id,
                 text=message.text
@@ -405,6 +409,8 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"❌ Reply error: {e}")
         await update.message.reply_text("❌ Failed to send reply.")
+
+# ================= MEDIA =================
 
 # ================= MEDIA =================
 
@@ -424,7 +430,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # 🔥 CEK PREMIUM
         is_premium = check_premium(user_id)
-        prefix_text = "⭐ *Premium*\n\n" if is_premium else ""
         
         if is_reply:
             reply_to = message.reply_to_message
@@ -441,13 +446,18 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if replied_text:
                 await context.bot.send_message(
                     chat_id=partner_id,
-                    text=f"{prefix_text}⬆️ {replied_text}",
-                    parse_mode='Markdown'
+                    text=f"⬆️ {replied_text}"
                 )
         
         caption = message.caption or ""
+        
+        # Jika premium, kirim tag terpisah
         if is_premium:
-            caption = f"⭐ *Premium*\n\n{caption}"
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text="⭐ *Premium*",
+                parse_mode='Markdown'
+            )
         
         if message.photo:
             photo = message.photo[-1]
@@ -505,8 +515,10 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MESSAGE HANDLER =================
 
+# ================= MESSAGE HANDLER =================
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages - with premium label"""
+    """Handle text messages - with premium tag as separate message"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -553,16 +565,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Not in a chat. Use /search.")
         return
     
-    # 🔥 CEK PREMIUM - Tambahkan tag di atas pesan
+    # 🔥 CEK PREMIUM - Kirim tag sebagai pesan terpisah
     is_premium = check_premium(user_id)
     
     try:
         if is_premium:
-            # Kirim pesan dengan tag premium di atasnya
+            # Kirim tag premium sebagai pesan terpisah
             await context.bot.send_message(
                 chat_id=partner_id,
-                text=f"⭐ *Premium*\n\n{update.message.text}",
+                text="⭐ *Premium*",
                 parse_mode='Markdown'
+            )
+            # Kirim pesan asli
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=update.message.text
             )
         else:
             await context.bot.send_message(
