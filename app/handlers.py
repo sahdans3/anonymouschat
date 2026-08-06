@@ -28,7 +28,6 @@ from app.database import (
     get_chat_report,
     save_waiting_message,
     delete_waiting_message,
-    get_waiting_message,
     increment_partner_count,
     get_partner_count,
     reset_partner_count,
