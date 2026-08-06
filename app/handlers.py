@@ -33,7 +33,13 @@ from app.database import (
     get_partner_count,
     reset_partner_count,
     get_last_partner_reset,
-    check_daily_limit
+    check_daily_limit,
+    create_referral_code,
+    get_referral_code,
+    use_referral_code,
+    get_referral_stats,
+    is_referred,
+    get_referrer
 )
 from app.keyboards import feedback_keyboard, premium_keyboard
 
@@ -95,6 +101,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    # 🔥 AUTO REFERRAL VIA LINK
+    if context.args:
+        code = context.args[0].upper().strip()
+        if not is_referred(user_id):
+            success, result = use_referral_code(user_id, code)
+            if success:
+                referrer_id = result
+                await update.message.reply_text(
+                    f"✅ *Referral link activated!* 🎉\n\n"
+                    f"You joined using a referral link.\n"
+                    f"Your referrer has been rewarded!\n\n"
+                    f"Thank you for joining! 🙌",
+                    parse_mode='Markdown'
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"🎉 *Someone joined using your referral link!*\n\n"
+                             f"Your referral count has increased!\n"
+                             f"Check /referral for your stats.",
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error sending referral notification: {e}")
+    
     is_premium = check_premium(user_id)
     premium_tag = "⭐ *Premium*" if is_premium else ""
     
@@ -105,11 +136,137 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Type your gender: *male* or *female*\n"
             "Type /search to find a partner.\n"
             "Type /premium to see premium features.\n"
-            "Type /myprofile to see your profile.",
+            "Type /referral to get your referral link.",
             parse_mode='Markdown'
         )
     except TelegramError as e:
         print(e)
+
+# ================= REFERRAL COMMANDS =================
+
+async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show referral link and info"""
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    register_user(user_id)
+    
+    code = create_referral_code(user_id)
+    if not code:
+        await update.message.reply_text("❌ Failed to create referral code.")
+        return
+    
+    count, referred = get_referral_stats(user_id)
+    bot_username = context.bot.username
+    referral_link = f"https://t.me/{bot_username}?start={code}"
+    
+    reward_chats = count * 5
+    
+    text = (
+        f"🎁 *Referral Program*\n\n"
+        f"📤 *Share this link with friends:*\n"
+        f"`{referral_link}`\n\n"
+        f"📊 *Your Stats:*\n"
+        f"👤 Referred: {count} people\n"
+        f"🎯 Extra chats: +{reward_chats}\n\n"
+        f"💡 *How it works:*\n"
+        f"1. Share the link above\n"
+        f"2. Friends click and join\n"
+        f"3. You get +5 partner limit per friend!\n\n"
+        f"📋 Or copy this text:\n"
+        f"*Join me on Anonymous Chat!*\n"
+        f"{referral_link}"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("📤 Share Link", url=referral_link),
+            InlineKeyboardButton("📋 Copy Text", callback_data="copy_referral")
+        ],
+        [
+            InlineKeyboardButton("📊 Referral Stats", callback_data="referral_stats")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show detailed referral stats"""
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    register_user(user_id)
+    
+    code = get_referral_code(user_id)
+    count, referred = get_referral_stats(user_id)
+    referred_by = get_referrer(user_id)
+    
+    text = (
+        f"📊 *Referral Details*\n\n"
+        f"Your code: `{code or 'Not set'}`\n"
+        f"Total referred: {count}\n"
+        f"Extra chats: +{count * 5}\n"
+    )
+    
+    if referred_by:
+        text += f"\n👤 You were referred by: `{referred_by}`\n"
+    
+    if referred:
+        text += f"\n📋 Last referrals:\n"
+        for uid, created_at in referred[:5]:
+            text += f"• User `{uid}` joined {created_at.strftime('%d/%m')}\n"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+# ================= REFERRAL CALLBACK =================
+
+async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback for referral menu"""
+    query = update.callback_query
+    if query is None:
+        return
+    
+    await query.answer()
+    user_id = query.from_user.id
+    code = get_referral_code(user_id)
+    if not code:
+        code = create_referral_code(user_id)
+    
+    count, referred = get_referral_stats(user_id)
+    bot_username = context.bot.username
+    referral_link = f"https://t.me/{bot_username}?start={code}"
+    reward_chats = count * 5
+    
+    text = (
+        f"🎁 *Referral Program*\n\n"
+        f"📤 *Share this link:*\n"
+        f"`{referral_link}`\n\n"
+        f"📊 *Stats:*\n"
+        f"👤 Referred: {count} people\n"
+        f"🎯 Extra chats: +{reward_chats}\n\n"
+        f"💡 Share link → friends join → you get rewards!"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("📤 Share", url=referral_link),
+            InlineKeyboardButton("📋 Copy", callback_data="copy_referral")
+        ],
+        [
+            InlineKeyboardButton("📊 Stats", callback_data="referral_stats")
+        ]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ================= PREMIUM COMMANDS =================
 
@@ -269,7 +426,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # CEK DAILY LIMIT
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
@@ -337,7 +493,6 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # CEK DAILY LIMIT
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
@@ -685,6 +840,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
+    # 🔥 Handle referral copy
+    if data == "copy_referral":
+        code = get_referral_code(user_id)
+        if code:
+            bot_username = context.bot.username
+            referral_link = f"https://t.me/{bot_username}?start={code}"
+            text = f"Join me on Anonymous Chat!\n{referral_link}"
+            await query.edit_message_text(
+                f"📋 *Copy this text:*\n\n"
+                f"`{text}`\n\n"
+                f"Share it with your friends! 🎉",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back", callback_data="referral_back")]
+                ])
+            )
+        return
+    
+    if data == "referral_back":
+        await referral_callback(update, context)
+        return
+    
+    if data == "referral_stats":
+        count, referred = get_referral_stats(user_id)
+        text = (
+            f"📊 *Referral Stats*\n\n"
+            f"Total referred: {count}\n"
+            f"Extra chats: +{count * 5}\n"
+        )
+        if referred:
+            text += f"\n📋 Recent referrals:\n"
+            for uid, created_at in referred[:5]:
+                text += f"• `{uid}` joined {created_at.strftime('%d/%m')}\n"
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back", callback_data="referral_back")]
+            ])
+        )
+        return
+    
+    # Handle premium
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
@@ -713,6 +911,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:

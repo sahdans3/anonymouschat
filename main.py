@@ -27,7 +27,9 @@ from app.handlers import (
     myprofile,
     balance,
     pre_checkout_handler,
-    successful_payment_handler
+    successful_payment_handler,
+    referral,
+    referral_stats
 )
 
 flask_app = Flask(__name__)
@@ -63,6 +65,10 @@ def run_bot():
     app.add_handler(CommandHandler("setpref", setpref))
     app.add_handler(CommandHandler("myprofile", myprofile))
     app.add_handler(CommandHandler("balance", balance))
+    
+    # Referral handlers
+    app.add_handler(CommandHandler("referral", referral))
+    app.add_handler(CommandHandler("referstats", referral_stats))
 
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))

@@ -5,6 +5,8 @@ import threading
 import time
 import logging
 from datetime import datetime
+import random
+import string
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +97,9 @@ def init_db():
             premium_expiry TIMESTAMP DEFAULT NULL,
             partner_count INT DEFAULT 0,
             last_partner_reset TIMESTAMP DEFAULT NULL,
+            referral_code VARCHAR(20) UNIQUE DEFAULT NULL,
+            referred_by BIGINT DEFAULT NULL,
+            referral_count INT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -320,27 +325,6 @@ def delete_waiting_message(user_id):
         cursor.close()
         return_connection(db)
 
-def get_waiting_message(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            SELECT chat_id, message_id
-            FROM waiting_messages
-            WHERE user_id = %s
-        """, (user_id,))
-        return cursor.fetchone()
-    except Exception as e:
-        logger.error(f"❌ Get waiting message error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
 # ================= PARTNER COUNT =================
 
 def increment_partner_count(user_id):
@@ -455,14 +439,12 @@ def check_daily_limit(user_id, limit=20, cooldown_hours=19):
         partner_count = result[0] or 0
         last_reset = result[1]
         
-        # Jika belum pernah reset, set sekarang
         if not last_reset:
             cursor.close()
             return_connection(db)
             reset_partner_count(user_id)
             return True, 0, None
         
-        # Cek apakah sudah lewat 19 jam
         elapsed = (datetime.now() - last_reset).total_seconds() / 3600
         if elapsed >= cooldown_hours:
             reset_partner_count(user_id)
@@ -485,6 +467,177 @@ def check_daily_limit(user_id, limit=20, cooldown_hours=19):
         cursor.close()
         return_connection(db)
         return True, 0, None
+
+# ================= REFERRAL FUNCTIONS =================
+
+def generate_referral_code():
+    """Generate random referral code"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+def create_referral_code(user_id):
+    """Create referral code for user if not exists"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            return result[0]
+        
+        code = generate_referral_code()
+        while True:
+            cursor.execute("SELECT user_id FROM users WHERE referral_code=%s", (code,))
+            if not cursor.fetchone():
+                break
+            code = generate_referral_code()
+        
+        cursor.execute("UPDATE users SET referral_code=%s WHERE user_id=%s", (code, user_id))
+        db.commit()
+        return code
+    except Exception as e:
+        logger.error(f"❌ Create referral code error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referral_code(user_id):
+    """Get user's referral code"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get referral code error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def use_referral_code(new_user_id, code):
+    """Process referral code usage"""
+    if not DATABASE_URL:
+        return False, "System error"
+    db = connect_db()
+    if not db:
+        return False, "Database error"
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT user_id, referral_count FROM users WHERE referral_code=%s", (code,))
+        result = cursor.fetchone()
+        if not result:
+            return False, "Invalid referral code"
+        
+        referrer_id = result[0]
+        
+        if referrer_id == new_user_id:
+            return False, "You cannot use your own referral code"
+        
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (new_user_id,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            return False, "You have already used a referral code"
+        
+        cursor.execute("""
+            UPDATE users 
+            SET referral_count = referral_count + 1
+            WHERE user_id = %s
+        """, (referrer_id,))
+        
+        cursor.execute("""
+            UPDATE users 
+            SET referred_by = %s 
+            WHERE user_id = %s
+        """, (referrer_id, new_user_id))
+        
+        db.commit()
+        return True, referrer_id
+    except Exception as e:
+        logger.error(f"❌ Use referral code error: {e}")
+        db.rollback()
+        return False, str(e)
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referral_stats(user_id):
+    """Get referral stats for user"""
+    if not DATABASE_URL:
+        return 0, []
+    db = connect_db()
+    if not db:
+        return 0, []
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_count FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        count = result[0] if result else 0
+        
+        cursor.execute("""
+            SELECT user_id, created_at 
+            FROM users 
+            WHERE referred_by = %s 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        """, (user_id,))
+        referred = cursor.fetchall()
+        
+        return count, referred
+    except Exception as e:
+        logger.error(f"❌ Get referral stats error: {e}")
+        return 0, []
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def is_referred(user_id):
+    """Check if user was referred by someone"""
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result and result[0] is not None
+    except Exception as e:
+        logger.error(f"❌ Is referred error: {e}")
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referrer(user_id):
+    """Get who referred this user"""
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get referrer error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
 
 # ================= PREMIUM =================
 
