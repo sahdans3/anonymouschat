@@ -40,7 +40,7 @@ from app.database import (
     is_referred,
     get_referrer
 )
-from app.keyboards import feedback_keyboard, premium_keyboard
+from app.keyboards import feedback_keyboard, premium_keyboard, gender_keyboard
 
 PARTNER_FOUND_MESSAGE = (
     "Partner found 😺\n\n"
@@ -92,6 +92,57 @@ async def send_chat_report_to_user(context, user_id, partner_id):
             except Exception as e:
                 print(f"❌ Send report to user2 error: {e}")
 
+# ================= GENDER SELECTION =================
+
+async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show gender selection buttons"""
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    register_user(user_id)
+    
+    partner_id = get_partner(user_id)
+    if partner_id:
+        await update.message.reply_text(
+            "❌ You are in a chat. Please /stop first to change gender."
+        )
+        return
+    
+    await update.message.reply_text(
+        "👤 *Select your gender:*\n\n"
+        "Choose your gender to help us match you with the right partner.",
+        parse_mode='Markdown',
+        reply_markup=gender_keyboard()
+    )
+
+async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle gender selection callback"""
+    query = update.callback_query
+    if query is None:
+        return
+    
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "gender_male":
+        gender = "male"
+    elif data == "gender_female":
+        gender = "female"
+    else:
+        return
+    
+    if set_gender(user_id, gender):
+        await query.edit_message_text(
+            f"✅ Your gender has been set to: *{gender}*\n\n"
+            "Now type /search to find a partner.\n\n"
+            "*Premium Users:*\n"
+            "Use /setpref male/female/any to filter partners by gender.",
+            parse_mode='Markdown'
+        )
+    else:
+        await query.edit_message_text("❌ Failed to set gender. Please try again.")
+
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,7 +151,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    # 🔥 AUTO REFERRAL VIA LINK
     if context.args:
         code = context.args[0].upper().strip()
         if not is_referred(user_id):
@@ -128,23 +178,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium = check_premium(user_id)
     premium_tag = "⭐ *Premium*" if is_premium else ""
     
+    gender, _ = get_user_gender(user_id)
+    
     try:
-        await update.message.reply_text(
-            f"👋 Welcome!\n\n"
-            f"{premium_tag}\n\n"
-            "Type your gender: *male* or *female*\n"
-            "Type /search to find a partner.\n"
-            "Type /premium to see premium features.\n"
-            "Type /referral to get your referral link.",
-            parse_mode='Markdown'
-        )
+        if gender:
+            await update.message.reply_text(
+                f"👋 Welcome back!\n\n"
+                f"{premium_tag}\n\n"
+                f"⚧️ Your gender: *{gender}*\n\n"
+                "Type /search to find a partner.\n"
+                "Type /premium to see premium features.\n"
+                "Type /myprofile to see your profile.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                f"👋 Welcome!\n\n"
+                f"{premium_tag}\n\n"
+                "Please select your gender to continue:",
+                parse_mode='Markdown',
+                reply_markup=gender_keyboard()
+            )
     except TelegramError as e:
         print(e)
 
 # ================= REFERRAL COMMANDS =================
 
 async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show referral link and info"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -158,23 +218,16 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count, referred = get_referral_stats(user_id)
     bot_username = context.bot.username
     referral_link = f"https://t.me/{bot_username}?start={code}"
-    
     reward_chats = count * 5
     
     text = (
         f"🎁 *Referral Program*\n\n"
-        f"📤 *Share this link with friends:*\n"
+        f"📤 *Share this link:*\n"
         f"`{referral_link}`\n\n"
         f"📊 *Your Stats:*\n"
         f"👤 Referred: {count} people\n"
         f"🎯 Extra chats: +{reward_chats}\n\n"
-        f"💡 *How it works:*\n"
-        f"1. Share the link above\n"
-        f"2. Friends click and join\n"
-        f"3. You get +5 partner limit per friend!\n\n"
-        f"📋 Or copy this text:\n"
-        f"*Join me on Anonymous Chat!*\n"
-        f"{referral_link}"
+        f"💡 Share link → friends join → you get rewards!"
     )
     
     keyboard = [
@@ -195,7 +248,6 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show detailed referral stats"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -225,7 +277,6 @@ async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= REFERRAL CALLBACK =================
 
 async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback for referral menu"""
     query = update.callback_query
     if query is None:
         return
@@ -448,11 +499,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     clear_user_status(user_id)
     
+    # CEK GENDER - jika belum punya, tampilkan tombol
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
-            "⚠️ Set your gender first!\n\nType: *male* or *female*",
-            parse_mode='Markdown'
+            "⚠️ Please select your gender first!",
+            parse_mode='Markdown',
+            reply_markup=gender_keyboard()
         )
         return
     
@@ -755,7 +808,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Failed to send media.")
 
-# ================= MESSAGE =================
+# ================= MESSAGE HANDLER =================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -766,40 +819,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_handler(update, context)
         return
     
-    text = update.message.text.lower().strip()
-    
-    if text in ['male', 'female']:
-        partner_id = get_partner(user_id)
-        if partner_id:
-            try:
-                await context.bot.send_message(chat_id=partner_id, text=update.message.text)
-                return
-            except Exception as e:
-                print(f"❌ Send error: {e}")
-                return
-        
-        register_user(user_id)
-        if set_gender(user_id, text):
-            await update.message.reply_text(
-                f"✅ Gender set to: *{text}*\n\n"
-                "Now type /search to find a partner.",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Failed to set gender.")
-        return
-    
     partner_id = get_partner(user_id)
     
     if partner_id is None:
         gender, _ = get_user_gender(user_id)
         if not gender:
             await update.message.reply_text(
-                "⚠️ Set your gender first!\n\nType: *male* or *female*",
-                parse_mode='Markdown'
+                "⚠️ Please select your gender first!",
+                parse_mode='Markdown',
+                reply_markup=gender_keyboard()
             )
         else:
-            await update.message.reply_text("❌ Not in a chat. Use /search.")
+            await update.message.reply_text("❌ Not in a chat. Use /search to find a partner.")
         return
     
     is_premium = check_premium(user_id)
@@ -808,12 +839,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_premium:
             await context.bot.send_message(
                 chat_id=partner_id,
-                text="⭐ *Premium*",
+                text="⭐ *Premium*\n\n" + update.message.text,
                 parse_mode='Markdown'
-            )
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text=update.message.text
             )
         else:
             await context.bot.send_message(
@@ -839,7 +866,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
-    # 🔥 Handle referral copy
+    # Handle gender callback
+    if data.startswith("gender_"):
+        await gender_callback(update, context)
+        return
+    
+    # Handle referral copy
     if data == "copy_referral":
         code = get_referral_code(user_id)
         if code:

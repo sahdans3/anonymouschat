@@ -471,11 +471,9 @@ def check_daily_limit(user_id, limit=20, cooldown_hours=19):
 # ================= REFERRAL FUNCTIONS =================
 
 def generate_referral_code():
-    """Generate random referral code"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def create_referral_code(user_id):
-    """Create referral code for user if not exists"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -507,7 +505,6 @@ def create_referral_code(user_id):
         return_connection(db)
 
 def get_referral_code(user_id):
-    """Get user's referral code"""
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -526,7 +523,6 @@ def get_referral_code(user_id):
         return_connection(db)
 
 def use_referral_code(new_user_id, code):
-    """Process referral code usage"""
     if not DATABASE_URL:
         return False, "System error"
     db = connect_db()
@@ -572,7 +568,6 @@ def use_referral_code(new_user_id, code):
         return_connection(db)
 
 def get_referral_stats(user_id):
-    """Get referral stats for user"""
     if not DATABASE_URL:
         return 0, []
     db = connect_db()
@@ -602,7 +597,6 @@ def get_referral_stats(user_id):
         return_connection(db)
 
 def is_referred(user_id):
-    """Check if user was referred by someone"""
     if not DATABASE_URL:
         return False
     db = connect_db()
@@ -621,7 +615,6 @@ def is_referred(user_id):
         return_connection(db)
 
 def get_referrer(user_id):
-    """Get who referred this user"""
     if not DATABASE_URL:
         return None
     db = connect_db()

@@ -23,3 +23,13 @@ def premium_keyboard():
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def gender_keyboard():
+    """Keyboard untuk memilih gender"""
+    keyboard = [
+        [
+            InlineKeyboardButton("👨 Male", callback_data="gender_male"),
+            InlineKeyboardButton("👩 Female", callback_data="gender_female")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
