@@ -499,7 +499,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     clear_user_status(user_id)
     
-    # CEK GENDER - jika belum punya, tampilkan tombol
     gender, _ = get_user_gender(user_id)
     if not gender:
         await update.message.reply_text(
@@ -917,13 +916,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
-                "💳 *Cara Bayar*\n\n"
-                "1. Pilih paket\n"
-                "2. Bayar dengan Telegram Stars\n"
-                "3. Premium aktif!\n"
-                "♾️ Unlimited partners!\n"
-                "⏳ No daily limit!",
+                f"💳 *Cara Bayar Premium dengan Telegram Stars*\n\n"
+                f"📌 *Langkah-langkah:*\n\n"
+                f"1️⃣ *Beli Telegram Stars* dulu\n"
+                f"   🔵 [Klik di sini untuk Top Up Stars](tg://premium_offer?ref=stars)\n\n"
+                f"2️⃣ *Kembali ke bot ini*\n\n"
+                f"3️⃣ *Pilih paket premium* di bawah\n\n"
+                f"4️⃣ *Bayar dengan Stars* (konfirmasi pembayaran)\n\n"
+                f"5️⃣ *Premium aktif!* 🎉\n\n"
+                f"📋 *User ID Anda:* `{user_id}`\n"
+                f"   (Salin ID ini jika perlu hubungi admin)\n\n"
+                f"💡 *Tips:* Beli Stars di [Fragment](https://fragment.com) lebih murah!\n"
+                f"💰 1 Star ≈ $0.013 (nilai setelah biaya)\n\n"
+                f"📱 *Minimal withdraw:* 1000 Stars\n"
+                f"⏳ *Masa tunggu withdraw:* 21 hari",
                 parse_mode='Markdown',
+                disable_web_page_preview=True,
                 reply_markup=premium_keyboard()
             )
             return
