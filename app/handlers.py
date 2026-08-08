@@ -915,7 +915,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💳 *Cara Bayar Premium dengan Telegram Stars*\n\n"
                 f"📌 *Langkah-langkah:*\n\n"
                 f"1️⃣ *Beli Telegram Stars* dulu\n"
-                f"   🔵 [Klik di sini untuk Top Up Stars](https://t.me/fund)\n\n"
+                f"   🔵 *fund.tg*\n\n"
                 f"2️⃣ *Kembali ke bot ini*\n\n"
                 f"3️⃣ *Pilih paket premium* di bawah\n\n"
                 f"4️⃣ *Bayar dengan Stars* (konfirmasi pembayaran)\n\n"
