@@ -95,7 +95,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
 # ================= GENDER SELECTION =================
 
 async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show gender selection buttons"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -116,7 +115,6 @@ async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle gender selection callback"""
     query = update.callback_query
     if query is None:
         return
@@ -273,8 +271,6 @@ async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"• User `{uid}` joined {created_at.strftime('%d/%m')}\n"
     
     await update.message.reply_text(text, parse_mode='Markdown')
-
-# ================= REFERRAL CALLBACK =================
 
 async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -919,14 +915,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💳 *Cara Bayar Premium dengan Telegram Stars*\n\n"
                 f"📌 *Langkah-langkah:*\n\n"
                 f"1️⃣ *Beli Telegram Stars* dulu\n"
-                f"   🔵 [Beli Stars di Fragment](https://fragment.com)\n\n"
+                f"   🔵 [Klik di sini untuk Top Up Stars](https://t.me/fund)\n\n"
                 f"2️⃣ *Kembali ke bot ini*\n\n"
                 f"3️⃣ *Pilih paket premium* di bawah\n\n"
                 f"4️⃣ *Bayar dengan Stars* (konfirmasi pembayaran)\n\n"
                 f"5️⃣ *Premium aktif!* 🎉\n\n"
                 f"📋 *User ID Anda:* `{user_id}`\n"
                 f"   (Salin ID ini jika perlu hubungi admin)\n\n"
-                f"💡 *Tips:* Beli Stars di Fragment lebih murah!\n"
+                f"💡 *Tips:* Beli Stars di [Fragment](https://fragment.com) lebih murah!\n"
                 f"💰 1 Star ≈ $0.013 (nilai setelah biaya)\n\n"
                 f"📱 *Minimal withdraw:* 1000 Stars\n"
                 f"⏳ *Masa tunggu withdraw:* 21 hari",
