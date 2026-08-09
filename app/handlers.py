@@ -253,6 +253,7 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= GENDER SELECTION =================
 
 async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show gender selection buttons - bisa hapus gender lama"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -265,14 +266,31 @@ async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    current_gender, _ = get_user_gender(user_id)
+    
+    text = "👤 *Select your gender:*\n\nChoose your gender to help us match you with the right partner."
+    if current_gender:
+        text += f"\n\n⚧️ Current gender: *{current_gender}*\n"
+        text += "📌 Pilih gender baru untuk mengupdate, atau klik 'Hapus Gender' untuk menghapus."
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("👨 Male", callback_data="gender_male"),
+            InlineKeyboardButton("👩 Female", callback_data="gender_female")
+        ],
+        [
+            InlineKeyboardButton("🗑️ Hapus Gender", callback_data="gender_delete")
+        ]
+    ]
+    
     await update.message.reply_text(
-        "👤 *Select your gender:*\n\n"
-        "Choose your gender to help us match you with the right partner.",
+        text,
         parse_mode='Markdown',
-        reply_markup=gender_keyboard()
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle gender selection callback"""
     query = update.callback_query
     if query is None:
         return
@@ -280,6 +298,24 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     data = query.data
+    
+    if data == "gender_delete":
+        db = connect_db()
+        cursor = db.cursor()
+        try:
+            cursor.execute("UPDATE users SET gender = NULL WHERE user_id = %s", (user_id,))
+            db.commit()
+            await query.edit_message_text(
+                "🗑️ *Gender has been removed!*\n\n"
+                "You can select a new gender anytime using /gender.",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Error: {e}")
+        finally:
+            cursor.close()
+            db.close()
+        return
     
     if data == "gender_male":
         gender = "male"
@@ -788,34 +824,70 @@ async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(ok=True)
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Aktifkan premium setelah pembayaran berhasil"""
+    """Aktifkan premium setelah pembayaran berhasil - FIXED"""
     user_id = update.effective_user.id
     payload = update.message.successful_payment.payload
     days = int(payload.split('_')[1])
     
     print(f"💰 Payment successful for user {user_id}, days: {days}")
     
-    if set_premium(user_id, days):
+    is_premium_before, _ = get_premium_status(user_id)
+    
+    success = False
+    for attempt in range(3):
+        success = set_premium(user_id, days)
+        if success:
+            break
+        await asyncio.sleep(0.5)
+    
+    if success:
         is_premium, expiry = get_premium_status(user_id)
         if is_premium:
             await update.message.reply_text(
                 f"✅ *Premium Active!* 🎉\n\n"
                 f"Premium {days} hari sudah aktif!\n"
-                f"📅 Expires: {expiry.strftime('%Y-%m-%d') if expiry else 'N/A'}\n\n"
+                f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}\n\n"
                 "🎯 Filter gender unlocked!\n"
                 "♾️ Unlimited partners!\n"
                 "⏳ No daily limit!\n\n"
                 "Use /setpref to set preferred gender.",
                 parse_mode='Markdown'
             )
+            
+            if not is_premium_before:
+                await notify_admin(
+                    context, 
+                    f"✅ *Premium Activated*\n\n"
+                    f"👤 User: `{user_id}`\n"
+                    f"📅 Durasi: {days} hari\n"
+                    f"💰 Payment successful!"
+                )
         else:
             await update.message.reply_text(
                 "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
                 parse_mode='Markdown'
             )
-            await notify_admin(context, f"⚠️ User {user_id} membayar tapi premium tidak aktif! days: {days}")
+            await notify_admin(
+                context, 
+                f"⚠️ *Premium Activation Failed!*\n\n"
+                f"👤 User: `{user_id}`\n"
+                f"📅 Days: {days}\n"
+                f"💳 User sudah membayar tapi premium tidak aktif!\n\n"
+                f"Gunakan: `/setpremium {user_id} {days}`"
+            )
     else:
-        await update.message.reply_text("❌ Gagal aktivasi premium. Silakan hubungi admin.")
+        await update.message.reply_text(
+            "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
+            parse_mode='Markdown'
+        )
+        await notify_admin(
+            context, 
+            f"⚠️ *Premium Activation Failed!*\n\n"
+            f"👤 User: `{user_id}`\n"
+            f"📅 Days: {days}\n"
+            f"💳 User sudah membayar tapi premium tidak aktif!\n\n"
+            f"Gunakan: `/setpremium {user_id} {days}`"
+        )
 
 # ================= REPLY =================
 

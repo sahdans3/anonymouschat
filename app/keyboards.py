@@ -19,17 +19,20 @@ def premium_keyboard():
             InlineKeyboardButton("🌟 365 Hari - 730 ⭐", callback_data="premium_365")
         ],
         [
-            InlineKeyboardButton("❓ Cara Bayar", callback_data="premium_help")
+            InlineKeyboardButton("💳 Cara Bayar", callback_data="premium_help")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def gender_keyboard():
-    """Keyboard untuk memilih gender"""
+    """Keyboard untuk memilih gender dengan tombol hapus"""
     keyboard = [
         [
             InlineKeyboardButton("👨 Male", callback_data="gender_male"),
             InlineKeyboardButton("👩 Female", callback_data="gender_female")
+        ],
+        [
+            InlineKeyboardButton("🗑️ Hapus Gender", callback_data="gender_delete")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

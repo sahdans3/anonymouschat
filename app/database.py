@@ -706,6 +706,28 @@ def set_premium(user_id, days=30):
         cursor.close()
         return_connection(db)
 
+def get_premium_status(user_id):
+    """Get user's premium status and expiry - with debug"""
+    if not DATABASE_URL:
+        return False, None
+    db = connect_db()
+    if not db:
+        return False, None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            logger.info(f"📊 Premium status for {user_id}: premium={result[0]}, expiry={result[1]}")
+            return result[0] == 1, result[1]
+        return False, None
+    except Exception as e:
+        logger.error(f"❌ Get premium status error: {e}")
+        return False, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
 def set_gender(user_id, gender):
     if not DATABASE_URL:
         return False
