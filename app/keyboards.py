@@ -25,7 +25,6 @@ def premium_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def gender_keyboard():
-    """Keyboard untuk memilih gender dengan tombol hapus"""
     keyboard = [
         [
             InlineKeyboardButton("👨 Male", callback_data="gender_male"),

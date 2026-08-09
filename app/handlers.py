@@ -52,7 +52,7 @@ PARTNER_FOUND_MESSAGE = (
 
 FREE_USER_LIMIT = 6
 COOLDOWN_HOURS = 19
-ADMIN_ID = 6348859633  # Ganti dengan ID admin Anda
+ADMIN_ID = 6348859633
 
 # ================= SEND CHAT REPORT =================
 
@@ -97,7 +97,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
 # ================= NOTIFY ADMIN =================
 
 async def notify_admin(context, message):
-    """Kirim notifikasi ke admin"""
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
@@ -110,7 +109,6 @@ async def notify_admin(context, message):
 # ================= ADMIN COMMANDS =================
 
 async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: Set premium manually untuk user"""
     if update.message is None:
         return
     
@@ -187,7 +185,6 @@ async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Gagal mengaktifkan premium untuk user `{target_user}`")
 
 async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: Cek status premium user"""
     if update.message is None:
         return
     
@@ -227,7 +224,6 @@ async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User: Report bug premium tidak aktif"""
     if update.message is None:
         return
     
@@ -253,7 +249,6 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= GENDER SELECTION =================
 
 async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show gender selection buttons - bisa hapus gender lama"""
     if update.message is None:
         return
     user_id = update.effective_user.id
@@ -290,7 +285,6 @@ async def gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle gender selection callback"""
     query = update.callback_query
     if query is None:
         return
@@ -509,41 +503,6 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================= PREMIUM COMMANDS =================
-
-async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    register_user(user_id)
-    
-    if not check_premium(user_id):
-        await update.message.reply_text(
-            "🔒 *Premium Feature*\n\n"
-            "Gender preference is a premium feature!\n\n"
-            "/premium - see premium options",
-            parse_mode='Markdown',
-            reply_markup=premium_keyboard()
-        )
-        return
-    
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: /setpref male\n"
-            "Usage: /setpref female\n"
-            "Usage: /setpref any"
-        )
-        return
-    
-    pref = args[0].lower()
-    if pref not in ['male', 'female', 'any']:
-        await update.message.reply_text("❌ Choose: male, female, or any")
-        return
-    
-    if set_preferred_gender(user_id, pref):
-        await update.message.reply_text(f"✅ Preferred gender: *{pref}*", parse_mode='Markdown')
-    else:
-        await update.message.reply_text("❌ Failed to set preference.")
 
 async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -824,7 +783,6 @@ async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(ok=True)
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Aktifkan premium setelah pembayaran berhasil - FIXED"""
     user_id = update.effective_user.id
     payload = update.message.successful_payment.payload
     days = int(payload.split('_')[1])
