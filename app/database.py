@@ -665,6 +665,7 @@ def check_premium(user_id):
         return_connection(db)
 
 def set_premium(user_id, days=30):
+    """Set user as premium for X days - with verification"""
     if not DATABASE_URL:
         return False
     db = connect_db()
@@ -672,17 +673,31 @@ def set_premium(user_id, days=30):
         return False
     cursor = db.cursor()
     try:
+        cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
+        if not cursor.fetchone():
+            logger.error(f"❌ User {user_id} not found in database")
+            return False
+        
         cursor.execute("""
             UPDATE users 
-            SET premium=1, 
-                premium_expiry=CURRENT_TIMESTAMP + INTERVAL '%s days',
+            SET premium = 1, 
+                premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
                 partner_count = 0,
-                last_partner_reset = NULL
-            WHERE user_id=%s
+                last_partner_reset = CURRENT_TIMESTAMP
+            WHERE user_id = %s
         """, (days, user_id))
+        
         db.commit()
-        logger.info(f"✅ User {user_id} set as premium for {days} days, partner count reset")
-        return True
+        
+        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result and result[0] == 1:
+            logger.info(f"✅ User {user_id} set as premium for {days} days, partner count reset")
+            return True
+        else:
+            logger.error(f"❌ Verification failed for user {user_id}")
+            return False
+            
     except Exception as e:
         logger.error(f"❌ Set premium error: {e}")
         db.rollback()

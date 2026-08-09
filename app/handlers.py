@@ -38,7 +38,8 @@ from app.database import (
     use_referral_code,
     get_referral_stats,
     is_referred,
-    get_referrer
+    get_referrer,
+    connect_db
 )
 from app.keyboards import feedback_keyboard, premium_keyboard, gender_keyboard
 
@@ -51,6 +52,7 @@ PARTNER_FOUND_MESSAGE = (
 
 FREE_USER_LIMIT = 6
 COOLDOWN_HOURS = 19
+ADMIN_ID = 6348859633  # Ganti dengan ID admin Anda
 
 # ================= SEND CHAT REPORT =================
 
@@ -91,6 +93,162 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 )
             except Exception as e:
                 print(f"❌ Send report to user2 error: {e}")
+
+# ================= NOTIFY ADMIN =================
+
+async def notify_admin(context, message):
+    """Kirim notifikasi ke admin"""
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"🔔 *Admin Notification*\n\n{message}",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"⚠️ Error sending admin notification: {e}")
+
+# ================= ADMIN COMMANDS =================
+
+async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: Set premium manually untuk user"""
+    if update.message is None:
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Anda tidak memiliki akses ke perintah ini.")
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "📋 *Admin Premium Manual*\n\n"
+            "Usage:\n"
+            "/setpremium <user_id> <days>\n"
+            "/setpremium 123456789 30\n\n"
+            "Untuk menonaktifkan premium:\n"
+            "/setpremium 123456789 0\n\n"
+            "Cek status user:\n"
+            "/cekpremium <user_id>",
+            parse_mode='Markdown'
+        )
+        return
+    
+    target_user = int(args[0])
+    days = int(args[1])
+    
+    if days <= 0:
+        db = connect_db()
+        cursor = db.cursor()
+        try:
+            cursor.execute("""
+                UPDATE users 
+                SET premium = 0, 
+                    premium_expiry = NULL,
+                    partner_count = 0,
+                    last_partner_reset = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (target_user,))
+            db.commit()
+            await update.message.reply_text(
+                f"✅ Premium *dinonaktifkan* untuk user `{target_user}`",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+        finally:
+            cursor.close()
+            db.close()
+    else:
+        if set_premium(target_user, days):
+            is_premium, expiry = get_premium_status(target_user)
+            await update.message.reply_text(
+                f"✅ Premium *diaktifkan* untuk user `{target_user}`\n\n"
+                f"📅 Durasi: {days} hari\n"
+                f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}\n"
+                f"🔓 Status: {'✅ Active' if is_premium else '❌ Failed'}",
+                parse_mode='Markdown'
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user,
+                    text=f"✅ *Premium telah diaktifkan oleh admin!* 🎉\n\n"
+                         f"📅 Durasi: {days} hari\n\n"
+                         "🎯 Filter gender unlocked!\n"
+                         "♾️ Unlimited partners!\n"
+                         "⏳ No daily limit!\n\n"
+                         "Use /setpref to set preferred gender.",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                print(f"⚠️ Error notifying user: {e}")
+        else:
+            await update.message.reply_text(f"❌ Gagal mengaktifkan premium untuk user `{target_user}`")
+
+async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: Cek status premium user"""
+    if update.message is None:
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Anda tidak memiliki akses ke perintah ini.")
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /cekpremium <user_id>")
+        return
+    
+    target_user = int(args[0])
+    
+    is_premium, expiry = get_premium_status(target_user)
+    partner_count = get_partner_count(target_user)
+    gender, preferred = get_user_gender(target_user)
+    
+    if is_premium:
+        status = "✅ *Active*"
+        expiry_text = f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}"
+    else:
+        status = "❌ *Inactive*"
+        expiry_text = "📅 Expires: N/A"
+    
+    await update.message.reply_text(
+        f"📊 *User Premium Status*\n\n"
+        f"👤 User ID: `{target_user}`\n"
+        f"🌟 Status: {status}\n"
+        f"{expiry_text}\n"
+        f"📊 Partner Count: {partner_count}\n"
+        f"⚧️ Gender: {gender or 'Not set'}\n"
+        f"🎯 Preferred: {preferred or 'Not set'}\n",
+        parse_mode='Markdown'
+    )
+
+async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User: Report bug premium tidak aktif"""
+    if update.message is None:
+        return
+    
+    user_id = update.effective_user.id
+    
+    await update.message.reply_text(
+        f"🐞 *Report Premium Bug*\n\n"
+        f"Terima kasih telah melaporkan! Admin akan segera memproses.\n\n"
+        f"📋 User ID Anda: `{user_id}`\n\n"
+        f"Admin akan mengaktifkan premium secara manual.",
+        parse_mode='Markdown'
+    )
+    
+    await notify_admin(
+        context, 
+        f"🐞 *Laporan Bug Premium*\n\n"
+        f"👤 User: `{user_id}`\n"
+        f"📋 User melaporkan premium tidak aktif setelah pembayaran.\n\n"
+        f"Gunakan `/cekpremium {user_id}` untuk cek status\n"
+        f"Gunakan `/setpremium {user_id} 30` untuk aktivasi manual"
+    )
 
 # ================= GENDER SELECTION =================
 
@@ -630,22 +788,34 @@ async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(ok=True)
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aktifkan premium setelah pembayaran berhasil"""
     user_id = update.effective_user.id
     payload = update.message.successful_payment.payload
     days = int(payload.split('_')[1])
     
+    print(f"💰 Payment successful for user {user_id}, days: {days}")
+    
     if set_premium(user_id, days):
-        await update.message.reply_text(
-            f"✅ *Premium Active!* 🎉\n\n"
-            f"Premium {days} hari aktif!\n"
-            "🎯 Filter gender unlocked!\n"
-            "♾️ Unlimited partners!\n"
-            "⏳ No daily limit!\n"
-            "Use /setpref to set preferred gender.",
-            parse_mode='Markdown'
-        )
+        is_premium, expiry = get_premium_status(user_id)
+        if is_premium:
+            await update.message.reply_text(
+                f"✅ *Premium Active!* 🎉\n\n"
+                f"Premium {days} hari sudah aktif!\n"
+                f"📅 Expires: {expiry.strftime('%Y-%m-%d') if expiry else 'N/A'}\n\n"
+                "🎯 Filter gender unlocked!\n"
+                "♾️ Unlimited partners!\n"
+                "⏳ No daily limit!\n\n"
+                "Use /setpref to set preferred gender.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
+                parse_mode='Markdown'
+            )
+            await notify_admin(context, f"⚠️ User {user_id} membayar tapi premium tidak aktif! days: {days}")
     else:
-        await update.message.reply_text("❌ Gagal aktivasi premium.")
+        await update.message.reply_text("❌ Gagal aktivasi premium. Silakan hubungi admin.")
 
 # ================= REPLY =================
 
