@@ -904,7 +904,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner - INSTAN, siapa saja langsung dipasangkan"""
+    """Find partner - INSTAN MATCH, siapa saja"""
     if not DATABASE_URL:
         return None
     
@@ -915,18 +915,15 @@ def find_partner(user_id):
     cursor = db.cursor()
     
     try:
-        # Cek apakah user sudah dalam chat
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (user_id,))
         user_check = cursor.fetchone()
         if user_check and user_check[0] is not None:
             return None
         
-        # Cek apakah user ada di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if not cursor.fetchone():
             return None
         
-        # 🔥 LANGSUNG ambil user pertama di queue (tanpa filter gender)
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
@@ -943,7 +940,6 @@ def find_partner(user_id):
         
         partner_id = partner[0]
         
-        # Verifikasi partner
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
@@ -951,7 +947,6 @@ def find_partner(user_id):
             db.commit()
             return None
         
-        # Pasangkan
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
@@ -970,6 +965,7 @@ def find_partner(user_id):
     finally:
         cursor.close()
         return_connection(db)
+
 def stop_chat(user_id):
     if not DATABASE_URL:
         return None

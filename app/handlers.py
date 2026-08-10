@@ -57,6 +57,7 @@ ADMIN_ID = 6348859633
 # ================= SEND CHAT REPORT =================
 
 async def send_chat_report_to_user(context, user_id, partner_id):
+    """Send chat report to BOTH users - handle blocked users"""
     chat_id = end_chat_session(user_id)
     if chat_id:
         report = get_chat_report(chat_id)
@@ -74,6 +75,7 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 f"💬 How was your chat?"
             )
             
+            # Kirim ke user1
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -81,9 +83,13 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                     parse_mode='Markdown',
                     reply_markup=feedback_keyboard()
                 )
+            except Forbidden:
+                print(f"⚠️ User {user_id} blocked the bot. Skipping report.")
+                remove_user(user_id)
             except Exception as e:
                 print(f"❌ Send report to user1 error: {e}")
             
+            # Kirim ke user2 (partner)
             try:
                 await context.bot.send_message(
                     chat_id=partner_id,
@@ -91,6 +97,9 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                     parse_mode='Markdown',
                     reply_markup=feedback_keyboard()
                 )
+            except Forbidden:
+                print(f"⚠️ User {partner_id} blocked the bot. Skipping report.")
+                remove_user(partner_id)
             except Exception as e:
                 print(f"❌ Send report to user2 error: {e}")
 
@@ -179,6 +188,9 @@ async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          "Use /setpref to set preferred gender.",
                     parse_mode='Markdown'
                 )
+            except Forbidden:
+                print(f"⚠️ User {target_user} blocked the bot")
+                remove_user(target_user)
             except Exception as e:
                 print(f"⚠️ Error notifying user: {e}")
         else:
@@ -667,7 +679,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access.",
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -702,11 +715,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
     
-    # 🔥 LANGSUNG join queue dan cari partner
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 INSTAN - cari partner langsung
     partner = find_partner(user_id)
     
     if partner:
@@ -715,10 +726,23 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increment_partner_count(user_id)
         increment_partner_count(partner)
         
-        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+        # Kirim ke user1
+        try:
+            await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+        except Forbidden:
+            print(f"⚠️ User {user_id} blocked the bot")
+            remove_user(user_id)
+            return
+        
+        # Kirim ke partner
+        try:
+            await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+        except Forbidden:
+            print(f"⚠️ User {partner} blocked the bot")
+            remove_user(partner)
+            await update.message.reply_text("❌ Partner blocked the bot. Please try again.")
+            return
     else:
-        # 🔥 Jika tidak ada partner, langsung kasih pesan "waiting" tanpa delay
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
@@ -737,7 +761,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access.",
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -754,18 +779,17 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text="😞 Your partner has left the chat."
             )
         except Forbidden:
+            print(f"⚠️ Partner {old_partner} blocked the bot. Cleaning up...")
             remove_user(old_partner)
         except Exception as e:
-            print(f"⚠️ Error: {e}")
+            print(f"⚠️ Error sending to old partner: {e}")
     
     stop_chat(user_id)
     clear_user_status(user_id)
     
-    # 🔥 LANGSUNG join queue dan cari partner
     set_searching(user_id, 1)
     join_queue(user_id)
     
-    # 🔥 INSTAN - cari partner langsung
     partner = find_partner(user_id)
     
     if partner:
@@ -801,6 +825,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text="😞 Your partner has ended the chat."
             )
         except Forbidden:
+            print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
             remove_user(partner_id)
         except Exception as e:
             print(e)
@@ -832,16 +857,20 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     if success:
         is_premium, expiry = get_premium_status(user_id)
         if is_premium:
-            await update.message.reply_text(
-                f"✅ *Premium Active!* 🎉\n\n"
-                f"Premium {days} hari sudah aktif!\n"
-                f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}\n\n"
-                "🎯 Filter gender unlocked!\n"
-                "♾️ Unlimited partners!\n"
-                "⏳ No daily limit!\n\n"
-                "Use /setpref to set preferred gender.",
-                parse_mode='Markdown'
-            )
+            try:
+                await update.message.reply_text(
+                    f"✅ *Premium Active!* 🎉\n\n"
+                    f"Premium {days} hari sudah aktif!\n"
+                    f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}\n\n"
+                    "🎯 Filter gender unlocked!\n"
+                    "♾️ Unlimited partners!\n"
+                    "⏳ No daily limit!\n\n"
+                    "Use /setpref to set preferred gender.",
+                    parse_mode='Markdown'
+                )
+            except Forbidden:
+                print(f"⚠️ User {user_id} blocked the bot")
+                remove_user(user_id)
         else:
             await update.message.reply_text(
                 "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
@@ -923,9 +952,10 @@ async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
     except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
         stop_chat(user_id)
         remove_user(partner_id)
-        await update.message.reply_text("❌ Partner left. Use /search.")
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
     except Exception as e:
         print(f"❌ Reply error: {e}")
         await update.message.reply_text("❌ Failed to send reply.")
@@ -1018,9 +1048,10 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
     except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
         stop_chat(user_id)
         remove_user(partner_id)
-        await update.message.reply_text("❌ Partner left. Use /search.")
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
     except Exception as e:
         print(f"❌ Media error: {e}")
         await update.message.reply_text("❌ Failed to send media.")
@@ -1065,9 +1096,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=update.message.text
             )
     except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
         stop_chat(user_id)
         remove_user(partner_id)
-        await update.message.reply_text("❌ Partner left. Use /search.")
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
     except Exception as e:
         print(f"❌ Send error: {e}")
         await update.message.reply_text("❌ Failed to send message.")
