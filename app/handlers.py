@@ -439,7 +439,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if gender:
             if is_premium:
-                # 🔥 PREMIUM: tampilkan 3 tombol filter
                 current_filter = get_filter_gender(user_id)
                 await update.message.reply_text(
                     f"👋 Welcome back!\n\n"
@@ -450,7 +449,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=premium_filter_keyboard_with_current(current_filter)
                 )
             else:
-                # 🔥 FREE: tanpa tombol
                 await update.message.reply_text(
                     f"👋 Welcome back!\n\n"
                     f"{premium_tag}\n\n"
@@ -712,16 +710,20 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    is_premium = check_premium(user_id)
+    current_filter = get_filter_gender(user_id) if is_premium else None
+    
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         await update.message.reply_text(
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
             f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
-            reply_markup=premium_keyboard()
+            reply_markup=reply_markup
         )
         return
     
@@ -731,6 +733,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stop_chat(user_id)
         clear_user_status(user_id)
         await update.message.reply_text("💬 You left your previous chat.\nSearching for new partner...")
+        return
     
     clear_user_status(user_id)
     
@@ -768,16 +771,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
         
-        # 🔥 Jika premium, tampilkan tombol filter
-        if check_premium(user_id):
-            current_filter = get_filter_gender(user_id)
+        if is_premium:
             await update.message.reply_text(
                 "💬 Chat started! Select filter:",
                 reply_markup=premium_filter_keyboard_with_current(current_filter)
             )
     else:
-        # 🔥 Jika premium, tampilkan tombol filter saat waiting
-        reply_markup = premium_filter_keyboard_with_current(get_filter_gender(user_id)) if check_premium(user_id) else None
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         waiting_msg = await update.message.reply_text(
             "🔍 Waiting for another user...",
             reply_markup=reply_markup
@@ -792,16 +792,20 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
+    is_premium = check_premium(user_id)
+    current_filter = get_filter_gender(user_id) if is_premium else None
+    
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         await update.message.reply_text(
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
             f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
-            reply_markup=premium_keyboard()
+            reply_markup=reply_markup
         )
         return
     
@@ -838,14 +842,13 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
         
-        if check_premium(user_id):
-            current_filter = get_filter_gender(user_id)
+        if is_premium:
             await update.message.reply_text(
                 "💬 Chat started! Select filter:",
                 reply_markup=premium_filter_keyboard_with_current(current_filter)
             )
     else:
-        reply_markup = premium_filter_keyboard_with_current(get_filter_gender(user_id)) if check_premium(user_id) else None
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         waiting_msg = await update.message.reply_text(
             "🔍 Waiting for another user...",
             reply_markup=reply_markup
@@ -1119,6 +1122,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     
+    is_premium = check_premium(user_id)
+    current_filter = get_filter_gender(user_id) if is_premium else None
+    
     if update.message.reply_to_message is not None:
         await reply_handler(update, context)
         return
@@ -1134,10 +1140,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=gender_keyboard()
             )
         else:
-            await update.message.reply_text("❌ Not in a chat. Use /search to find a partner.")
+            reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
+            await update.message.reply_text(
+                "❌ Not in a chat. Use /search to find a partner.",
+                reply_markup=reply_markup
+            )
         return
-    
-    is_premium = check_premium(user_id)
     
     try:
         if is_premium:
@@ -1154,10 +1162,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Forbidden:
         stop_chat(user_id)
         remove_user(partner_id)
-        await update.message.reply_text("❌ Partner left. Use /search.")
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
+        await update.message.reply_text(
+            "❌ Partner left. Use /search.",
+            reply_markup=reply_markup
+        )
     except Exception as e:
         print(f"❌ Send error: {e}")
-        await update.message.reply_text("❌ Failed to send message.")
+        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
+        await update.message.reply_text(
+            "❌ Failed to send message.",
+            reply_markup=reply_markup
+        )
 
 # ================= BUTTON =================
 
@@ -1170,17 +1186,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
-    # Handle gender callback
     if data.startswith("gender_"):
         await gender_callback(update, context)
         return
     
-    # Handle filter callback
     if data.startswith("filter_"):
         await filter_callback(update, context)
         return
     
-    # Handle referral copy
     if data == "copy_referral":
         code = get_referral_code(user_id)
         if code:
@@ -1222,7 +1235,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle premium
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
@@ -1260,7 +1272,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:
