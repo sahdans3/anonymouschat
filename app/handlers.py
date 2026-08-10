@@ -667,8 +667,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access:\n"
-            f"/premium - see premium options",
+            f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -703,9 +702,11 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
     
+    # 🔥 LANGSUNG join queue dan cari partner
     set_searching(user_id, 1)
     join_queue(user_id)
     
+    # 🔥 INSTAN - cari partner langsung
     partner = find_partner(user_id)
     
     if partner:
@@ -717,6 +718,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
     else:
+        # 🔥 Jika tidak ada partner, langsung kasih pesan "waiting" tanpa delay
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
@@ -735,8 +737,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access:\n"
-            f"/premium - see premium options",
+            f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -760,9 +761,11 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stop_chat(user_id)
     clear_user_status(user_id)
     
+    # 🔥 LANGSUNG join queue dan cari partner
     set_searching(user_id, 1)
     join_queue(user_id)
     
+    # 🔥 INSTAN - cari partner langsung
     partner = find_partner(user_id)
     
     if partner:

@@ -904,6 +904,7 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
+    """Find partner - INSTAN, siapa saja langsung dipasangkan"""
     if not DATABASE_URL:
         return None
     
@@ -914,58 +915,26 @@ def find_partner(user_id):
     cursor = db.cursor()
     
     try:
+        # Cek apakah user sudah dalam chat
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (user_id,))
         user_check = cursor.fetchone()
         if user_check and user_check[0] is not None:
             return None
         
+        # Cek apakah user ada di queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if not cursor.fetchone():
             return None
         
-        cursor.execute("SELECT gender FROM users WHERE user_id=%s", (user_id,))
-        user_info = cursor.fetchone()
-        user_gender = user_info[0] if user_info else None
-        
-        # 🔥 Opposite gender matching
-        if user_gender == "male":
-            target_gender = "female"
-        elif user_gender == "female":
-            target_gender = "male"
-        else:
-            target_gender = None
-        
-        if target_gender:
-            cursor.execute("""
-                SELECT wq.user_id
-                FROM waiting_queue wq
-                JOIN users u ON u.user_id = wq.user_id
-                WHERE wq.user_id <> %s
-                    AND (u.partner_id IS NULL OR u.partner_id = 0)
-                    AND u.searching = 1
-                    AND u.gender = %s
-                    AND wq.user_id NOT IN (
-                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
-                    )
-                ORDER BY wq.created_at ASC, wq.id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """, (user_id, target_gender))
-        else:
-            cursor.execute("""
-                SELECT wq.user_id
-                FROM waiting_queue wq
-                JOIN users u ON u.user_id = wq.user_id
-                WHERE wq.user_id <> %s
-                    AND (u.partner_id IS NULL OR u.partner_id = 0)
-                    AND u.searching = 1
-                    AND wq.user_id NOT IN (
-                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
-                    )
-                ORDER BY wq.created_at ASC, wq.id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """, (user_id,))
+        # 🔥 LANGSUNG ambil user pertama di queue (tanpa filter gender)
+        cursor.execute("""
+            SELECT user_id
+            FROM waiting_queue
+            WHERE user_id <> %s
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        """, (user_id,))
         
         partner = cursor.fetchone()
         
@@ -974,6 +943,7 @@ def find_partner(user_id):
         
         partner_id = partner[0]
         
+        # Verifikasi partner
         cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
         partner_check = cursor.fetchone()
         if partner_check and partner_check[0] is not None:
@@ -981,12 +951,13 @@ def find_partner(user_id):
             db.commit()
             return None
         
+        # Pasangkan
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
         db.commit()
-        logger.info(f"✅ Partner found: {user_id} <-> {partner_id}")
+        logger.info(f"⚡ INSTANT MATCH: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
@@ -999,7 +970,6 @@ def find_partner(user_id):
     finally:
         cursor.close()
         return_connection(db)
-
 def stop_chat(user_id):
     if not DATABASE_URL:
         return None
