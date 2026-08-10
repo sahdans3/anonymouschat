@@ -33,7 +33,9 @@ from app.handlers import (
     admin_premium,
     cek_premium,
     report_bug,
-    filter_gender
+    filter_gender,
+    menu_callback,
+    filter_callback
 )
 
 flask_app = Flask(__name__)
@@ -60,30 +62,40 @@ def run_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop))
     
+    # Premium handlers
     app.add_handler(CommandHandler("premium", premium))
     app.add_handler(CommandHandler("myprofile", myprofile))
     app.add_handler(CommandHandler("balance", balance))
     
+    # Referral handlers
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CommandHandler("referstats", referral_stats))
     
+    # Gender handler
     app.add_handler(CommandHandler("gender", gender_selection))
     app.add_handler(CommandHandler("filter", filter_gender))
     
+    # Admin handlers
     app.add_handler(CommandHandler("setpremium", admin_premium))
     app.add_handler(CommandHandler("cekpremium", cek_premium))
     app.add_handler(CommandHandler("report_bug", report_bug))
 
+    # Payment handlers
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
+    # Menu & Filter callback
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
+    app.add_handler(CallbackQueryHandler(filter_callback, pattern="^filter_"))
     app.add_handler(CallbackQueryHandler(button_handler))
 
+    # Media handlers
     app.add_handler(MessageHandler(filters.PHOTO, media_handler))
     app.add_handler(MessageHandler(filters.VIDEO, media_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, media_handler))
@@ -93,6 +105,7 @@ def run_bot():
     app.add_handler(MessageHandler(filters.ANIMATION, media_handler))
     app.add_handler(MessageHandler(filters.VIDEO_NOTE, media_handler))
     
+    # Text message handler
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -100,6 +113,7 @@ def run_bot():
         )
     )
 
+    # Error Handler
     app.add_error_handler(error_handler)
 
     print("🤖 Bot sedang berjalan...")
