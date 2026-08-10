@@ -39,18 +39,9 @@ from app.database import (
     get_referral_stats,
     is_referred,
     get_referrer,
-    connect_db,
-    set_filter_gender,
-    get_filter_gender
+    connect_db
 )
-from app.keyboards import (
-    feedback_keyboard, 
-    premium_keyboard, 
-    gender_keyboard,
-    premium_filter_keyboard,
-    premium_filter_keyboard_with_current,
-    free_menu_keyboard
-)
+from app.keyboards import feedback_keyboard, premium_keyboard, gender_keyboard
 
 PARTNER_FOUND_MESSAGE = (
     "Partner found 😺\n\n"
@@ -185,7 +176,7 @@ async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          "🎯 Filter gender unlocked!\n"
                          "♾️ Unlimited partners!\n"
                          "⏳ No daily limit!\n\n"
-                         "Use /filter to set your preferred gender.",
+                         "Use /setpref to set preferred gender.",
                     parse_mode='Markdown'
                 )
             except Exception as e:
@@ -213,7 +204,6 @@ async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, expiry = get_premium_status(target_user)
     partner_count = get_partner_count(target_user)
     gender, preferred = get_user_gender(target_user)
-    filter_gender = get_filter_gender(target_user)
     
     if is_premium:
         status = "✅ *Active*"
@@ -229,7 +219,6 @@ async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{expiry_text}\n"
         f"📊 Partner Count: {partner_count}\n"
         f"⚧️ Gender: {gender or 'Not set'}\n"
-        f"🎯 Filter: {filter_gender or 'Not set'}\n"
         f"🎯 Preferred: {preferred or 'Not set'}\n",
         parse_mode='Markdown'
     )
@@ -256,110 +245,6 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Gunakan `/cekpremium {user_id}` untuk cek status\n"
         f"Gunakan `/setpremium {user_id} 30` untuk aktivasi manual"
     )
-
-# ================= MENU CALLBACK =================
-
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle menu button callbacks"""
-    query = update.callback_query
-    if query is None:
-        return
-    
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-    
-    if data == "menu_search":
-        if check_premium(user_id):
-            await search(update, context)
-        else:
-            await query.edit_message_text(
-                "🔒 *Premium Feature*\n\n"
-                "Find a partner is a premium feature!\n\n"
-                "Upgrade to Premium to get:\n"
-                "✅ Unlimited partners\n"
-                "✅ Gender filter\n"
-                "✅ No daily limit\n\n"
-                "Type /premium to upgrade now!",
-                parse_mode='Markdown',
-                reply_markup=premium_keyboard()
-            )
-        return
-    
-    elif data == "menu_filter":
-        if check_premium(user_id):
-            await filter_gender(update, context)
-        else:
-            await query.edit_message_text(
-                "🔒 *Premium Feature*\n\n"
-                "Search by gender is a premium feature!\n\n"
-                "Upgrade to Premium to filter partners by gender:\n"
-                "✅ Male\n"
-                "✅ Female\n"
-                "✅ Any\n\n"
-                "Type /premium to upgrade now!",
-                parse_mode='Markdown',
-                reply_markup=premium_keyboard()
-            )
-        return
-
-# ================= FILTER GENDER =================
-
-async def filter_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tampilkan filter gender (hanya premium)"""
-    user_id = update.effective_user.id
-    register_user(user_id)
-    
-    if not check_premium(user_id):
-        await update.message.reply_text(
-            "🔒 *Premium Feature*\n\n"
-            "Search by gender is a premium feature!\n\n"
-            "Type /premium to upgrade.",
-            parse_mode='Markdown',
-            reply_markup=premium_keyboard()
-        )
-        return
-    
-    current_filter = get_filter_gender(user_id)
-    text = "🎯 *Select filter:*\n\n"
-    if current_filter:
-        text += f"Current: *{current_filter}*\n\n"
-    else:
-        text += "No filter active.\n\n"
-    text += "Select which gender you want to match with:"
-    
-    await update.message.reply_text(
-        text,
-        parse_mode='Markdown',
-        reply_markup=premium_filter_keyboard_with_current(current_filter)
-    )
-
-async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query is None:
-        return
-    
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-    
-    if data == "filter_male":
-        filter_val = "male"
-    elif data == "filter_female":
-        filter_val = "female"
-    elif data == "filter_any":
-        filter_val = "any"
-    else:
-        return
-    
-    if set_filter_gender(user_id, filter_val):
-        await query.edit_message_text(
-            f"✅ Filter set to: *{filter_val}*",
-            parse_mode='Markdown',
-            reply_markup=premium_filter_keyboard_with_current(filter_val)
-        )
-    else:
-        await query.edit_message_text("❌ Failed to set filter.")
 
 # ================= GENDER SELECTION =================
 
@@ -438,7 +323,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Your gender has been set to: *{gender}*\n\n"
             "Now type /search to find a partner.\n\n"
             "*Premium Users:*\n"
-            "Use /filter to filter partners by gender.",
+            "Use /setpref male/female/any to filter partners by gender.",
             parse_mode='Markdown'
         )
     else:
@@ -483,27 +368,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         if gender:
-            if is_premium:
-                # 🔥 PREMIUM: tampilkan tombol filter (Male, Female, Any)
-                current_filter = get_filter_gender(user_id)
-                await update.message.reply_text(
-                    f"👋 Welcome back!\n\n"
-                    f"{premium_tag}\n\n"
-                    f"⚧️ Your gender: *{gender}*\n\n"
-                    "Select filter:",
-                    parse_mode='Markdown',
-                    reply_markup=premium_filter_keyboard_with_current(current_filter)
-                )
-            else:
-                # 🔥 FREE: tampilkan menu (Find a partner + Search by gender)
-                await update.message.reply_text(
-                    f"👋 Welcome back!\n\n"
-                    f"{premium_tag}\n\n"
-                    f"⚧️ Your gender: *{gender}*\n\n"
-                    "Menu:",
-                    parse_mode='Markdown',
-                    reply_markup=free_menu_keyboard()
-                )
+            await update.message.reply_text(
+                f"👋 Welcome back!\n\n"
+                f"{premium_tag}\n\n"
+                f"⚧️ Your gender: *{gender}*\n\n"
+                "Type /search to find a partner.\n"
+                "Type /premium to see premium features.\n"
+                "Type /myprofile to see your profile.",
+                parse_mode='Markdown'
+            )
         else:
             await update.message.reply_text(
                 f"👋 Welcome!\n\n"
@@ -631,6 +504,41 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= PREMIUM COMMANDS =================
 
+async def setpref(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    register_user(user_id)
+    
+    if not check_premium(user_id):
+        await update.message.reply_text(
+            "🔒 *Premium Feature*\n\n"
+            "Gender preference is a premium feature!\n\n"
+            "/premium - see premium options",
+            parse_mode='Markdown',
+            reply_markup=premium_keyboard()
+        )
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Usage: /setpref male\n"
+            "Usage: /setpref female\n"
+            "Usage: /setpref any"
+        )
+        return
+    
+    pref = args[0].lower()
+    if pref not in ['male', 'female', 'any']:
+        await update.message.reply_text("❌ Choose: male, female, or any")
+        return
+    
+    if set_preferred_gender(user_id, pref):
+        await update.message.reply_text(f"✅ Preferred gender: *{pref}*", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❌ Failed to set preference.")
+
 async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return
@@ -663,7 +571,6 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partner = get_partner(user_id)
     partner_count = get_partner_count(user_id)
     last_reset = get_last_partner_reset(user_id)
-    filter_gender = get_filter_gender(user_id)
     
     premium_tag = "⭐ *Premium*" if is_premium else "❌ Free"
     expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
@@ -686,14 +593,11 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         limit_info = f"\n📊 Partners: {partner_count} ♾️ (Unlimited)"
     
-    filter_info = f"\n🎯 Filter: {filter_gender or 'Not set'}" if is_premium else ""
-    
     await update.message.reply_text(
         f"👤 *Profile*\n\n"
         f"{premium_tag}\n\n"
         f"Gender: {gender or 'Not set'}\n"
         f"Preferred: {preferred or 'Not set'}\n"
-        f"{filter_info}\n"
         f"Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}"
         f"{limit_info}\n"
         f"Partner: {partner if partner else 'None'}",
@@ -756,30 +660,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    if not check_premium(user_id):
-        await update.message.reply_text(
-            "🔒 *Premium Feature*\n\n"
-            "Find a partner is a premium feature!\n\n"
-            "Type /premium to upgrade.",
-            parse_mode='Markdown',
-            reply_markup=premium_keyboard()
-        )
-        return
-    
-    is_premium = check_premium(user_id)
-    current_filter = get_filter_gender(user_id) if is_premium else None
-    
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         await update.message.reply_text(
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access.",
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
             parse_mode='Markdown',
-            reply_markup=reply_markup
+            reply_markup=premium_keyboard()
         )
         return
     
@@ -789,7 +680,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stop_chat(user_id)
         clear_user_status(user_id)
         await update.message.reply_text("💬 You left your previous chat.\nSearching for new partner...")
-        return
     
     clear_user_status(user_id)
     
@@ -801,6 +691,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=gender_keyboard()
         )
         return
+    
+    if not check_premium(user_id):
+        partner_count = get_partner_count(user_id)
+        remaining = FREE_USER_LIMIT - partner_count
+        if remaining <= 5 and remaining > 0:
+            await update.message.reply_text(
+                f"⚠️ *Free User Limit*\n\n"
+                f"You have {remaining} free partner searches remaining today.\n"
+                f"Type /premium to upgrade for unlimited access.",
+                parse_mode='Markdown'
+            )
     
     set_searching(user_id, 1)
     join_queue(user_id)
@@ -815,18 +716,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-        
-        if is_premium:
-            await update.message.reply_text(
-                "💬 Chat started! Select filter:",
-                reply_markup=premium_filter_keyboard_with_current(current_filter)
-            )
     else:
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
-        waiting_msg = await update.message.reply_text(
-            "🔍 Waiting for another user...",
-            reply_markup=reply_markup
-        )
+        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= NEXT =================
@@ -837,30 +728,17 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id)
     
-    if not check_premium(user_id):
-        await update.message.reply_text(
-            "🔒 *Premium Feature*\n\n"
-            "Find a partner is a premium feature!\n\n"
-            "Type /premium to upgrade.",
-            parse_mode='Markdown',
-            reply_markup=premium_keyboard()
-        )
-        return
-    
-    is_premium = check_premium(user_id)
-    current_filter = get_filter_gender(user_id) if is_premium else None
-    
     can_search, count, remaining_hours = check_daily_limit(user_id)
     if not can_search:
         hours = remaining_hours
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
         await update.message.reply_text(
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access.",
+            f"Or upgrade to Premium for unlimited access:\n"
+            f"/premium - see premium options",
             parse_mode='Markdown',
-            reply_markup=reply_markup
+            reply_markup=premium_keyboard()
         )
         return
     
@@ -896,18 +774,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-        
-        if is_premium:
-            await update.message.reply_text(
-                "💬 Chat started! Select filter:",
-                reply_markup=premium_filter_keyboard_with_current(current_filter)
-            )
     else:
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
-        waiting_msg = await update.message.reply_text(
-            "🔍 Waiting for another user...",
-            reply_markup=reply_markup
-        )
+        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= STOP =================
@@ -956,14 +824,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     
     print(f"💰 Payment successful for user {user_id}, days: {days}")
     
-    is_premium_before, _ = get_premium_status(user_id)
-    
-    success = False
-    for attempt in range(3):
-        success = set_premium(user_id, days)
-        if success:
-            break
-        await asyncio.sleep(0.5)
+    success = set_premium(user_id, days)
     
     if success:
         is_premium, expiry = get_premium_status(user_id)
@@ -975,18 +836,9 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
                 "🎯 Filter gender unlocked!\n"
                 "♾️ Unlimited partners!\n"
                 "⏳ No daily limit!\n\n"
-                "Use /filter to set your preferred gender.",
+                "Use /setpref to set preferred gender.",
                 parse_mode='Markdown'
             )
-            
-            if not is_premium_before:
-                await notify_admin(
-                    context, 
-                    f"✅ *Premium Activated*\n\n"
-                    f"👤 User: `{user_id}`\n"
-                    f"📅 Durasi: {days} hari\n"
-                    f"💰 Payment successful!"
-                )
         else:
             await update.message.reply_text(
                 "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
@@ -1177,9 +1029,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     
-    is_premium = check_premium(user_id)
-    current_filter = get_filter_gender(user_id) if is_premium else None
-    
     if update.message.reply_to_message is not None:
         await reply_handler(update, context)
         return
@@ -1195,21 +1044,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=gender_keyboard()
             )
         else:
-            if is_premium:
-                reply_markup = premium_filter_keyboard_with_current(current_filter)
-                await update.message.reply_text(
-                    "❌ Not in a chat. Use /search to find a partner.",
-                    reply_markup=reply_markup
-                )
-            else:
-                await update.message.reply_text(
-                    "🔒 *Premium Feature*\n\n"
-                    "Find a partner is a premium feature!\n\n"
-                    "Type /premium to upgrade.",
-                    parse_mode='Markdown',
-                    reply_markup=premium_keyboard()
-                )
+            await update.message.reply_text("❌ Not in a chat. Use /search to find a partner.")
         return
+    
+    is_premium = check_premium(user_id)
     
     try:
         if is_premium:
@@ -1226,18 +1064,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Forbidden:
         stop_chat(user_id)
         remove_user(partner_id)
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
-        await update.message.reply_text(
-            "❌ Partner left. Use /search.",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("❌ Partner left. Use /search.")
     except Exception as e:
         print(f"❌ Send error: {e}")
-        reply_markup = premium_filter_keyboard_with_current(current_filter) if is_premium else None
-        await update.message.reply_text(
-            "❌ Failed to send message.",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("❌ Failed to send message.")
 
 # ================= BUTTON =================
 
@@ -1250,18 +1080,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
+    # Handle gender callback
     if data.startswith("gender_"):
         await gender_callback(update, context)
         return
     
-    if data.startswith("filter_"):
-        await filter_callback(update, context)
-        return
-    
-    if data.startswith("menu_"):
-        await menu_callback(update, context)
-        return
-    
+    # Handle referral copy
     if data == "copy_referral":
         code = get_referral_code(user_id)
         if code:
@@ -1303,6 +1127,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Handle premium
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
@@ -1340,6 +1165,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:

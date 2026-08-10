@@ -19,7 +19,7 @@ def premium_keyboard():
             InlineKeyboardButton("🌟 365 Hari - 730 ⭐", callback_data="premium_365")
         ],
         [
-            InlineKeyboardButton("💳 Cara Bayar", callback_data="premium_help")
+            InlineKeyboardButton("❓ Cara Bayar", callback_data="premium_help")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -32,23 +32,6 @@ def gender_keyboard():
         ],
         [
             InlineKeyboardButton("🗑️ Hapus Gender", callback_data="gender_delete")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def premium_filter_keyboard_with_current(current_filter):
-    """3 tombol filter untuk user premium"""
-    male_icon = "✅ " if current_filter == "male" else ""
-    female_icon = "✅ " if current_filter == "female" else ""
-    any_icon = "✅ " if current_filter == "any" or current_filter is None else ""
-    
-    keyboard = [
-        [
-            InlineKeyboardButton(f"{male_icon}👨 Male", callback_data="filter_male"),
-            InlineKeyboardButton(f"{female_icon}👩 Female", callback_data="filter_female")
-        ],
-        [
-            InlineKeyboardButton(f"{any_icon}🌐 Any", callback_data="filter_any")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

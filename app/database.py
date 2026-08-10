@@ -91,7 +91,6 @@ def init_db():
             partner_id BIGINT DEFAULT NULL,
             gender VARCHAR(10) DEFAULT NULL,
             preferred_gender VARCHAR(10) DEFAULT NULL,
-            filter_gender VARCHAR(10) DEFAULT NULL,
             premium INT DEFAULT 0,
             premium_expiry TIMESTAMP DEFAULT NULL,
             partner_count INT DEFAULT 0,
@@ -467,46 +466,6 @@ def check_daily_limit(user_id, limit=6, cooldown_hours=19):
         return_connection(db)
         return True, 0, None
 
-# ================= FILTER GENDER =================
-
-def set_filter_gender(user_id, filter_gender):
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        cursor.execute("UPDATE users SET filter_gender = %s WHERE user_id = %s", (filter_gender, user_id))
-        db.commit()
-        logger.info(f"✅ User {user_id} set filter gender to {filter_gender}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Set filter gender error: {e}")
-        db.rollback()
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_filter_gender(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT filter_gender FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except Exception as e:
-        logger.error(f"❌ Get filter gender error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
 # ================= REFERRAL =================
 
 def generate_referral_code():
@@ -726,15 +685,7 @@ def set_premium(user_id, days=30):
         """, (days, user_id))
         
         db.commit()
-        
-        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result and result[0] == 1:
-            logger.info(f"✅ User {user_id} set as premium for {days} days, partner count reset")
-            return True
-        else:
-            logger.error(f"❌ Verification failed for user {user_id}")
-            return False
+        return True
             
     except Exception as e:
         logger.error(f"❌ Set premium error: {e}")
@@ -755,7 +706,6 @@ def get_premium_status(user_id):
         cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         if result:
-            logger.info(f"📊 Premium status for {user_id}: premium={result[0]}, expiry={result[1]}")
             return result[0] == 1, result[1]
         return False, None
     except Exception as e:
@@ -973,14 +923,15 @@ def find_partner(user_id):
         if not cursor.fetchone():
             return None
         
-        cursor.execute("SELECT gender, filter_gender, premium FROM users WHERE user_id=%s", (user_id,))
+        cursor.execute("SELECT gender FROM users WHERE user_id=%s", (user_id,))
         user_info = cursor.fetchone()
         user_gender = user_info[0] if user_info else None
-        filter_gender = user_info[1] if user_info else None
-        is_premium = user_info[2] == 1 if user_info else False
         
-        if is_premium and filter_gender and filter_gender != 'any':
-            target_gender = filter_gender
+        # 🔥 Opposite gender matching
+        if user_gender == "male":
+            target_gender = "female"
+        elif user_gender == "female":
+            target_gender = "male"
         else:
             target_gender = None
         
