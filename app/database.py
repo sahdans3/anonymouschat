@@ -12,8 +12,6 @@ import string
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================= CEK DATABASE_URL =================
-
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
@@ -93,6 +91,7 @@ def init_db():
             partner_id BIGINT DEFAULT NULL,
             gender VARCHAR(10) DEFAULT NULL,
             preferred_gender VARCHAR(10) DEFAULT NULL,
+            filter_gender VARCHAR(10) DEFAULT NULL,
             premium INT DEFAULT 0,
             premium_expiry TIMESTAMP DEFAULT NULL,
             partner_count INT DEFAULT 0,
@@ -468,7 +467,47 @@ def check_daily_limit(user_id, limit=6, cooldown_hours=19):
         return_connection(db)
         return True, 0, None
 
-# ================= REFERRAL FUNCTIONS =================
+# ================= FILTER GENDER =================
+
+def set_filter_gender(user_id, filter_gender):
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET filter_gender = %s WHERE user_id = %s", (filter_gender, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set filter gender to {filter_gender}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set filter gender error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_filter_gender(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT filter_gender FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get filter gender error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= REFERRAL =================
 
 def generate_referral_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -665,7 +704,6 @@ def check_premium(user_id):
         return_connection(db)
 
 def set_premium(user_id, days=30):
-    """Set user as premium for X days - with verification"""
     if not DATABASE_URL:
         return False
     db = connect_db()
@@ -707,7 +745,6 @@ def set_premium(user_id, days=30):
         return_connection(db)
 
 def get_premium_status(user_id):
-    """Get user's premium status and expiry - with debug"""
     if not DATABASE_URL:
         return False, None
     db = connect_db()
@@ -784,26 +821,6 @@ def get_user_gender(user_id):
     except Exception as e:
         logger.error(f"❌ Get user gender error: {e}")
         return None, None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_premium_status(user_id):
-    if not DATABASE_URL:
-        return False, None
-    db = connect_db()
-    if not db:
-        return False, None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            return result[0] == 1, result[1]
-        return False, None
-    except Exception as e:
-        logger.error(f"❌ Get premium status error: {e}")
-        return False, None
     finally:
         cursor.close()
         return_connection(db)
@@ -904,21 +921,14 @@ def join_queue(user_id):
         if result and result[0] is not None:
             return
         
-        if is_premium == 1 and preferred_gender and preferred_gender != 'any':
-            cursor.execute("""
-                INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
-                VALUES(%s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id) DO NOTHING
-            """, (user_id, gender, preferred_gender))
-        else:
-            cursor.execute("""
-                INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
-                VALUES(%s, %s, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id) DO NOTHING
-            """, (user_id, gender))
+        cursor.execute("""
+            INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
+            VALUES(%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id, gender, preferred_gender))
         
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue")
+        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -963,14 +973,48 @@ def find_partner(user_id):
         if not cursor.fetchone():
             return None
         
-        cursor.execute("""
-            SELECT user_id
-            FROM waiting_queue
-            WHERE user_id <> %s
-            ORDER BY created_at ASC, id ASC
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        """, (user_id,))
+        cursor.execute("SELECT gender, filter_gender, premium FROM users WHERE user_id=%s", (user_id,))
+        user_info = cursor.fetchone()
+        user_gender = user_info[0] if user_info else None
+        filter_gender = user_info[1] if user_info else None
+        is_premium = user_info[2] == 1 if user_info else False
+        
+        if is_premium and filter_gender and filter_gender != 'any':
+            target_gender = filter_gender
+        else:
+            target_gender = None
+        
+        if target_gender:
+            cursor.execute("""
+                SELECT wq.user_id
+                FROM waiting_queue wq
+                JOIN users u ON u.user_id = wq.user_id
+                WHERE wq.user_id <> %s
+                    AND (u.partner_id IS NULL OR u.partner_id = 0)
+                    AND u.searching = 1
+                    AND u.gender = %s
+                    AND wq.user_id NOT IN (
+                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
+                    )
+                ORDER BY wq.created_at ASC, wq.id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """, (user_id, target_gender))
+        else:
+            cursor.execute("""
+                SELECT wq.user_id
+                FROM waiting_queue wq
+                JOIN users u ON u.user_id = wq.user_id
+                WHERE wq.user_id <> %s
+                    AND (u.partner_id IS NULL OR u.partner_id = 0)
+                    AND u.searching = 1
+                    AND wq.user_id NOT IN (
+                        SELECT partner_id FROM users WHERE partner_id IS NOT NULL
+                    )
+                ORDER BY wq.created_at ASC, wq.id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """, (user_id,))
         
         partner = cursor.fetchone()
         

@@ -39,9 +39,16 @@ from app.database import (
     get_referral_stats,
     is_referred,
     get_referrer,
-    connect_db
+    connect_db,
+    set_filter_gender,
+    get_filter_gender
 )
-from app.keyboards import feedback_keyboard, premium_keyboard, gender_keyboard
+from app.keyboards import (
+    feedback_keyboard, 
+    premium_keyboard, 
+    gender_keyboard,
+    filter_gender_keyboard_with_current
+)
 
 PARTNER_FOUND_MESSAGE = (
     "Partner found 😺\n\n"
@@ -176,7 +183,7 @@ async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          "🎯 Filter gender unlocked!\n"
                          "♾️ Unlimited partners!\n"
                          "⏳ No daily limit!\n\n"
-                         "Use /setpref to set preferred gender.",
+                         "Use /filter to set your preferred gender.",
                     parse_mode='Markdown'
                 )
             except Exception as e:
@@ -204,6 +211,7 @@ async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, expiry = get_premium_status(target_user)
     partner_count = get_partner_count(target_user)
     gender, preferred = get_user_gender(target_user)
+    filter_gender = get_filter_gender(target_user)
     
     if is_premium:
         status = "✅ *Active*"
@@ -219,6 +227,7 @@ async def cek_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{expiry_text}\n"
         f"📊 Partner Count: {partner_count}\n"
         f"⚧️ Gender: {gender or 'Not set'}\n"
+        f"🎯 Filter: {filter_gender or 'Not set'}\n"
         f"🎯 Preferred: {preferred or 'Not set'}\n",
         parse_mode='Markdown'
     )
@@ -245,6 +254,67 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Gunakan `/cekpremium {user_id}` untuk cek status\n"
         f"Gunakan `/setpremium {user_id} 30` untuk aktivasi manual"
     )
+
+# ================= FILTER GENDER =================
+
+async def filter_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    register_user(user_id)
+    
+    is_premium = check_premium(user_id)
+    if not is_premium:
+        await update.message.reply_text(
+            "🔒 *Premium Feature*\n\n"
+            "Gender filter is a premium feature!\n\n"
+            "Type /premium to upgrade.",
+            parse_mode='Markdown',
+            reply_markup=premium_keyboard()
+        )
+        return
+    
+    current_filter = get_filter_gender(user_id)
+    text = "🎯 *Filter Partner by Gender*\n\n"
+    if current_filter:
+        text += f"Current filter: *{current_filter}*\n\n"
+    else:
+        text += "No filter active.\n\n"
+    text += "Select which gender you want to match with:"
+    
+    await update.message.reply_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=filter_gender_keyboard_with_current(current_filter)
+    )
+
+async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None:
+        return
+    
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "filter_male":
+        filter_val = "male"
+    elif data == "filter_female":
+        filter_val = "female"
+    elif data == "filter_any":
+        filter_val = "any"
+    else:
+        return
+    
+    if set_filter_gender(user_id, filter_val):
+        await query.edit_message_text(
+            f"✅ *Filter set to: {filter_val}*\n\n"
+            "Now when you search, you will only match with this gender.",
+            parse_mode='Markdown',
+            reply_markup=filter_gender_keyboard_with_current(filter_val)
+        )
+    else:
+        await query.edit_message_text("❌ Failed to set filter.")
 
 # ================= GENDER SELECTION =================
 
@@ -323,7 +393,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Your gender has been set to: *{gender}*\n\n"
             "Now type /search to find a partner.\n\n"
             "*Premium Users:*\n"
-            "Use /setpref male/female/any to filter partners by gender.",
+            "Use /filter to filter partners by gender.",
             parse_mode='Markdown'
         )
     else:
@@ -536,6 +606,7 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partner = get_partner(user_id)
     partner_count = get_partner_count(user_id)
     last_reset = get_last_partner_reset(user_id)
+    filter_gender = get_filter_gender(user_id)
     
     premium_tag = "⭐ *Premium*" if is_premium else "❌ Free"
     expiry_text = f"\n📅 Expires: {expiry.strftime('%Y-%m-%d')}" if expiry and is_premium else ""
@@ -558,11 +629,14 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         limit_info = f"\n📊 Partners: {partner_count} ♾️ (Unlimited)"
     
+    filter_info = f"\n🎯 Filter: {filter_gender or 'Not set'}"
+    
     await update.message.reply_text(
         f"👤 *Profile*\n\n"
         f"{premium_tag}\n\n"
         f"Gender: {gender or 'Not set'}\n"
         f"Preferred: {preferred or 'Not set'}\n"
+        f"{filter_info}\n"
         f"Premium: {'✅ Active' + expiry_text if is_premium else '❌ Inactive'}"
         f"{limit_info}\n"
         f"Partner: {partner if partner else 'None'}",
@@ -808,7 +882,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
                 "🎯 Filter gender unlocked!\n"
                 "♾️ Unlimited partners!\n"
                 "⏳ No daily limit!\n\n"
-                "Use /setpref to set preferred gender.",
+                "Use /filter to set your preferred gender.",
                 parse_mode='Markdown'
             )
             
@@ -1064,6 +1138,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle gender callback
     if data.startswith("gender_"):
         await gender_callback(update, context)
+        return
+    
+    # Handle filter callback
+    if data.startswith("filter_"):
+        await filter_callback(update, context)
         return
     
     # Handle referral copy

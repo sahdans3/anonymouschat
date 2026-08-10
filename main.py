@@ -32,7 +32,8 @@ from app.handlers import (
     gender_selection,
     admin_premium,
     cek_premium,
-    report_bug
+    report_bug,
+    filter_gender
 )
 
 flask_app = Flask(__name__)
@@ -72,6 +73,7 @@ def run_bot():
     app.add_handler(CommandHandler("referstats", referral_stats))
     
     app.add_handler(CommandHandler("gender", gender_selection))
+    app.add_handler(CommandHandler("filter", filter_gender))
     
     app.add_handler(CommandHandler("setpremium", admin_premium))
     app.add_handler(CommandHandler("cekpremium", cek_premium))
