@@ -47,7 +47,7 @@ from app.keyboards import (
     feedback_keyboard, 
     premium_keyboard, 
     gender_keyboard,
-    filter_gender_keyboard_with_current
+    premium_filter_keyboard_with_current
 )
 
 PARTNER_FOUND_MESSAGE = (
@@ -285,7 +285,7 @@ async def filter_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         parse_mode='Markdown',
-        reply_markup=filter_gender_keyboard_with_current(current_filter)
+        reply_markup=premium_filter_keyboard_with_current(current_filter)
     )
 
 async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,7 +311,7 @@ async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ *Filter set to: {filter_val}*\n\n"
             "Now when you search, you will only match with this gender.",
             parse_mode='Markdown',
-            reply_markup=filter_gender_keyboard_with_current(filter_val)
+            reply_markup=premium_filter_keyboard_with_current(filter_val)
         )
     else:
         await query.edit_message_text("❌ Failed to set filter.")
@@ -438,15 +438,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         if gender:
-            await update.message.reply_text(
-                f"👋 Welcome back!\n\n"
-                f"{premium_tag}\n\n"
-                f"⚧️ Your gender: *{gender}*\n\n"
-                "Type /search to find a partner.\n"
-                "Type /premium to see premium features.\n"
-                "Type /myprofile to see your profile.",
-                parse_mode='Markdown'
-            )
+            if is_premium:
+                # 🔥 PREMIUM: tampilkan 3 tombol filter
+                current_filter = get_filter_gender(user_id)
+                await update.message.reply_text(
+                    f"👋 Welcome back!\n\n"
+                    f"{premium_tag}\n\n"
+                    f"⚧️ Your gender: *{gender}*\n\n"
+                    "Select which gender you want to match with:",
+                    parse_mode='Markdown',
+                    reply_markup=premium_filter_keyboard_with_current(current_filter)
+                )
+            else:
+                # 🔥 FREE: tanpa tombol
+                await update.message.reply_text(
+                    f"👋 Welcome back!\n\n"
+                    f"{premium_tag}\n\n"
+                    f"⚧️ Your gender: *{gender}*\n\n"
+                    "Type /search to find a partner.\n"
+                    "Type /premium to see premium features.\n"
+                    "Type /myprofile to see your profile.",
+                    parse_mode='Markdown'
+                )
         else:
             await update.message.reply_text(
                 f"👋 Welcome!\n\n"
@@ -629,7 +642,7 @@ async def myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         limit_info = f"\n📊 Partners: {partner_count} ♾️ (Unlimited)"
     
-    filter_info = f"\n🎯 Filter: {filter_gender or 'Not set'}"
+    filter_info = f"\n🎯 Filter: {filter_gender or 'Not set'}" if is_premium else ""
     
     await update.message.reply_text(
         f"👤 *Profile*\n\n"
@@ -706,8 +719,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access:\n"
-            f"/premium - see premium options",
+            f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -755,8 +767,21 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+        
+        # 🔥 Jika premium, tampilkan tombol filter
+        if check_premium(user_id):
+            current_filter = get_filter_gender(user_id)
+            await update.message.reply_text(
+                "💬 Chat started! Select filter:",
+                reply_markup=premium_filter_keyboard_with_current(current_filter)
+            )
     else:
-        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
+        # 🔥 Jika premium, tampilkan tombol filter saat waiting
+        reply_markup = premium_filter_keyboard_with_current(get_filter_gender(user_id)) if check_premium(user_id) else None
+        waiting_msg = await update.message.reply_text(
+            "🔍 Waiting for another user...",
+            reply_markup=reply_markup
+        )
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= NEXT =================
@@ -774,8 +799,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 *Daily Limit Reached*\n\n"
             f"You have reached the maximum of {FREE_USER_LIMIT} free partners today.\n\n"
             f"⏳ Please wait *{hours} hours* before searching again.\n\n"
-            f"Or upgrade to Premium for unlimited access:\n"
-            f"/premium - see premium options",
+            f"Or upgrade to Premium for unlimited access.",
             parse_mode='Markdown',
             reply_markup=premium_keyboard()
         )
@@ -813,8 +837,19 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
         await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+        
+        if check_premium(user_id):
+            current_filter = get_filter_gender(user_id)
+            await update.message.reply_text(
+                "💬 Chat started! Select filter:",
+                reply_markup=premium_filter_keyboard_with_current(current_filter)
+            )
     else:
-        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
+        reply_markup = premium_filter_keyboard_with_current(get_filter_gender(user_id)) if check_premium(user_id) else None
+        waiting_msg = await update.message.reply_text(
+            "🔍 Waiting for another user...",
+            reply_markup=reply_markup
+        )
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
 
 # ================= STOP =================

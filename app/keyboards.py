@@ -36,7 +36,8 @@ def gender_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def filter_gender_keyboard_with_current(current_filter):
+def premium_filter_keyboard_with_current(current_filter):
+    """3 tombol filter untuk user premium"""
     male_icon = "✅ " if current_filter == "male" else ""
     female_icon = "✅ " if current_filter == "female" else ""
     any_icon = "✅ " if current_filter == "any" or current_filter is None else ""
