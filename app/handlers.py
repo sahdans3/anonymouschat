@@ -57,7 +57,6 @@ ADMIN_ID = 6348859633
 # ================= SEND CHAT REPORT =================
 
 async def send_chat_report_to_user(context, user_id, partner_id):
-    """Send chat report to BOTH users - handle blocked users"""
     chat_id = end_chat_session(user_id)
     if chat_id:
         report = get_chat_report(chat_id)
@@ -257,6 +256,143 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Gunakan `/cekpremium {user_id}` untuk cek status\n"
         f"Gunakan `/setpremium {user_id} 30` untuk aktivasi manual"
     )
+
+# ================= PREMIUM PAYMENT HANDLERS =================
+
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Konfirmasi sebelum pembayaran Telegram Stars"""
+    query = update.pre_checkout_query
+    
+    try:
+        await query.answer(ok=True)
+        print(f"✅ Pre-checkout approved: user={query.from_user.id}, payload={query.invoice_payload}")
+    except Exception as e:
+        print(f"❌ Pre-checkout error: {e}")
+        try:
+            await query.answer(
+                ok=False,
+                error_message="Pembayaran tidak dapat diproses. Silakan coba lagi."
+            )
+        except Exception:
+            pass
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aktifkan premium setelah pembayaran berhasil"""
+    user_id = update.effective_user.id
+    payment = update.message.successful_payment
+    payload = payment.payload
+    total_amount = payment.total_amount
+    
+    print("=" * 50)
+    print(f"💰 PAYMENT SUCCESSFUL")
+    print(f"User        : {user_id}")
+    print(f"Payload     : {payload}")
+    print(f"Stars       : {total_amount}")
+    print("=" * 50)
+    
+    try:
+        if not payload or not payload.startswith("premium_"):
+            print(f"⚠️ Unknown payment payload: {payload}")
+            await update.message.reply_text(
+                "❌ Format pembayaran tidak dikenali. Silakan hubungi admin."
+            )
+            return
+        
+        try:
+            days = int(payload.split("_")[1])
+        except (IndexError, ValueError) as e:
+            print(f"❌ Invalid payload format: {payload}, error: {e}")
+            await update.message.reply_text(
+                "❌ Format pembayaran tidak valid. Silakan hubungi admin."
+            )
+            return
+        
+        if days <= 0:
+            print(f"❌ Invalid premium days: {days}")
+            await update.message.reply_text(
+                "❌ Durasi premium tidak valid. Silakan hubungi admin."
+            )
+            return
+        
+        success = set_premium(user_id, days)
+        
+        if not success:
+            print(f"❌ PAYMENT SUCCESS BUT SET PREMIUM FAILED: user={user_id}, days={days}")
+            await update.message.reply_text(
+                "⚠️ Pembayaran Anda berhasil, tetapi Premium belum dapat diaktifkan.\n\n"
+                f"📋 User ID Anda: `{user_id}`\n\n"
+                "Silakan hubungi admin dengan User ID ini.",
+                parse_mode='Markdown'
+            )
+            await notify_admin(
+                context,
+                f"⚠️ *Payment Success But Premium Failed*\n\n"
+                f"👤 User: `{user_id}`\n"
+                f"📅 Days: {days}\n"
+                f"💳 Stars: {total_amount}\n\n"
+                f"Gunakan: `/setpremium {user_id} {days}`"
+            )
+            return
+        
+        is_premium, expiry = get_premium_status(user_id)
+        
+        if not is_premium:
+            print(f"❌ CRITICAL: set_premium() returned True but status is still inactive for user {user_id}")
+            await update.message.reply_text(
+                "⚠️ Pembayaran berhasil, tetapi status Premium belum terbaca.\n\n"
+                f"📋 User ID Anda: `{user_id}`\n\n"
+                "Silakan hubungi admin.",
+                parse_mode='Markdown'
+            )
+            await notify_admin(
+                context,
+                f"⚠️ *Premium Status Mismatch*\n\n"
+                f"👤 User: `{user_id}`\n"
+                f"📅 Days: {days}\n"
+                f"💳 Stars: {total_amount}\n\n"
+                f"set_premium() sukses tapi status masih inactive!\n"
+                f"Gunakan: `/cekpremium {user_id}`"
+            )
+            return
+        
+        expiry_text = expiry.strftime("%Y-%m-%d %H:%M") if expiry else "N/A"
+        
+        print(f"✅ PREMIUM ACTIVATED: user={user_id}, days={days}, expiry={expiry_text}")
+        
+        await update.message.reply_text(
+            f"🎉 *Pembayaran Berhasil!*\n\n"
+            f"⭐ Premium: *AKTIF*\n"
+            f"⏳ Durasi: *{days} hari*\n"
+            f"📅 Expired: *{expiry_text}*\n\n"
+            f"Terima kasih sudah membeli Premium! ❤️\n\n"
+            "Gunakan /setpref untuk mengatur preferensi gender.",
+            parse_mode='Markdown'
+        )
+        
+        await notify_admin(
+            context,
+            f"✅ *Premium Activated Successfully*\n\n"
+            f"👤 User: `{user_id}`\n"
+            f"📅 Days: {days}\n"
+            f"💰 Stars: {total_amount}\n"
+            f"📅 Expires: {expiry_text}"
+        )
+        
+    except Exception as e:
+        print(f"❌ Successful payment error: {e}")
+        await update.message.reply_text(
+            "⚠️ Pembayaran diterima, tetapi terjadi kesalahan saat mengaktifkan Premium.\n\n"
+            f"📋 User ID Anda: `{user_id}`\n\n"
+            "Silakan hubungi admin.",
+            parse_mode='Markdown'
+        )
+        await notify_admin(
+            context,
+            f"⚠️ *Payment Error*\n\n"
+            f"👤 User: `{user_id}`\n"
+            f"❌ Error: {str(e)[:200]}\n"
+            f"💳 Stars: {total_amount}"
+        )
 
 # ================= GENDER SELECTION =================
 
@@ -839,271 +975,6 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("Chat ended 😞", reply_markup=feedback_keyboard())
 
-# ================= PAYMENT =================
-
-async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
-
-async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    payload = update.message.successful_payment.payload
-    days = int(payload.split('_')[1])
-    
-    print(f"💰 Payment successful for user {user_id}, days: {days}")
-    
-    success = set_premium(user_id, days)
-    
-    if success:
-        is_premium, expiry = get_premium_status(user_id)
-        if is_premium:
-            try:
-                await update.message.reply_text(
-                    f"✅ *Premium Active!* 🎉\n\n"
-                    f"Premium {days} hari sudah aktif!\n"
-                    f"📅 Expires: {expiry.strftime('%Y-%m-%d %H:%M') if expiry else 'N/A'}\n\n"
-                    "🎯 Filter gender unlocked!\n"
-                    "♾️ Unlimited partners!\n"
-                    "⏳ No daily limit!\n\n"
-                    "Use /setpref to set preferred gender.",
-                    parse_mode='Markdown'
-                )
-            except Forbidden:
-                print(f"⚠️ User {user_id} blocked the bot")
-                remove_user(user_id)
-        else:
-            await update.message.reply_text(
-                "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
-                parse_mode='Markdown'
-            )
-            await notify_admin(
-                context, 
-                f"⚠️ *Premium Activation Failed!*\n\n"
-                f"👤 User: `{user_id}`\n"
-                f"📅 Days: {days}\n"
-                f"💳 User sudah membayar tapi premium tidak aktif!\n\n"
-                f"Gunakan: `/setpremium {user_id} {days}`"
-            )
-    else:
-        await update.message.reply_text(
-            "❌ Gagal aktivasi premium. Silakan hubungi admin dengan /report_bug",
-            parse_mode='Markdown'
-        )
-        await notify_admin(
-            context, 
-            f"⚠️ *Premium Activation Failed!*\n\n"
-            f"👤 User: `{user_id}`\n"
-            f"📅 Days: {days}\n"
-            f"💳 User sudah membayar tapi premium tidak aktif!\n\n"
-            f"Gunakan: `/setpremium {user_id} {days}`"
-        )
-
-# ================= REPLY =================
-
-async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    partner_id = get_partner(user_id)
-    
-    if partner_id is None:
-        await update.message.reply_text("❌ You are not in a chat. Use /search.")
-        return
-    
-    try:
-        message = update.message
-        reply_to = message.reply_to_message
-        
-        replied_text = ""
-        if reply_to:
-            if reply_to.text:
-                replied_text = reply_to.text
-            elif reply_to.photo:
-                replied_text = "📸 Photo"
-            elif reply_to.video:
-                replied_text = "🎬 Video"
-            elif reply_to.sticker:
-                replied_text = "🎨 Sticker"
-            else:
-                replied_text = "📎 Media"
-        
-        is_premium = check_premium(user_id)
-        
-        if replied_text:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text=f"⬆️ {replied_text}"
-            )
-        
-        if is_premium:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text="⭐ *Premium*",
-                parse_mode='Markdown'
-            )
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text=message.text
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text=message.text
-            )
-        
-    except Forbidden:
-        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
-        stop_chat(user_id)
-        remove_user(partner_id)
-        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
-    except Exception as e:
-        print(f"❌ Reply error: {e}")
-        await update.message.reply_text("❌ Failed to send reply.")
-
-# ================= MEDIA =================
-
-async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    partner_id = get_partner(user_id)
-    
-    if partner_id is None:
-        await update.message.reply_text("❌ You are not in a chat. Use /search.")
-        return
-    
-    try:
-        message = update.message
-        is_reply = message.reply_to_message is not None
-        
-        is_premium = check_premium(user_id)
-        
-        if is_reply:
-            reply_to = message.reply_to_message
-            replied_text = ""
-            if reply_to.text:
-                replied_text = reply_to.text
-            elif reply_to.photo:
-                replied_text = "📸 Photo"
-            elif reply_to.video:
-                replied_text = "🎬 Video"
-            else:
-                replied_text = "📎 Media"
-            
-            if replied_text:
-                await context.bot.send_message(
-                    chat_id=partner_id,
-                    text=f"⬆️ {replied_text}"
-                )
-        
-        caption = message.caption or ""
-        
-        if is_premium:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text="⭐ *Premium*",
-                parse_mode='Markdown'
-            )
-        
-        if message.photo:
-            photo = message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            file_bytes = await file.download_as_bytearray()
-            await context.bot.send_photo(
-                chat_id=partner_id,
-                photo=io.BytesIO(file_bytes),
-                caption=caption
-            )
-        elif message.video:
-            video = message.video
-            file = await context.bot.get_file(video.file_id)
-            file_bytes = await file.download_as_bytearray()
-            await context.bot.send_video(
-                chat_id=partner_id,
-                video=io.BytesIO(file_bytes),
-                caption=caption
-            )
-        elif message.sticker:
-            await context.bot.send_sticker(
-                chat_id=partner_id,
-                sticker=message.sticker.file_id
-            )
-        elif message.voice:
-            voice = message.voice
-            file = await context.bot.get_file(voice.file_id)
-            file_bytes = await file.download_as_bytearray()
-            await context.bot.send_voice(
-                chat_id=partner_id,
-                voice=io.BytesIO(file_bytes),
-                caption=caption
-            )
-        elif message.animation:
-            animation = message.animation
-            file = await context.bot.get_file(animation.file_id)
-            file_bytes = await file.download_as_bytearray()
-            await context.bot.send_animation(
-                chat_id=partner_id,
-                animation=io.BytesIO(file_bytes),
-                caption=caption
-            )
-            
-    except Forbidden:
-        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
-        stop_chat(user_id)
-        remove_user(partner_id)
-        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
-    except Exception as e:
-        print(f"❌ Media error: {e}")
-        await update.message.reply_text("❌ Failed to send media.")
-
-# ================= MESSAGE HANDLER =================
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return
-    user_id = update.effective_user.id
-    
-    if update.message.reply_to_message is not None:
-        await reply_handler(update, context)
-        return
-    
-    partner_id = get_partner(user_id)
-    
-    if partner_id is None:
-        gender, _ = get_user_gender(user_id)
-        if not gender:
-            await update.message.reply_text(
-                "⚠️ Please select your gender first!",
-                parse_mode='Markdown',
-                reply_markup=gender_keyboard()
-            )
-        else:
-            await update.message.reply_text("❌ Not in a chat. Use /search to find a partner.")
-        return
-    
-    is_premium = check_premium(user_id)
-    
-    try:
-        if is_premium:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text="⭐ *Premium*\n\n" + update.message.text,
-                parse_mode='Markdown'
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=partner_id,
-                text=update.message.text
-            )
-    except Forbidden:
-        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
-        stop_chat(user_id)
-        remove_user(partner_id)
-        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
-    except Exception as e:
-        print(f"❌ Send error: {e}")
-        await update.message.reply_text("❌ Failed to send message.")
-
 # ================= BUTTON =================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1211,7 +1082,213 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("✅ Thank you for your feedback!")
 
-# ================= ERROR =================
+# ================= MESSAGE HANDLER =================
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    
+    if update.message.reply_to_message is not None:
+        await reply_handler(update, context)
+        return
+    
+    partner_id = get_partner(user_id)
+    
+    if partner_id is None:
+        gender, _ = get_user_gender(user_id)
+        if not gender:
+            await update.message.reply_text(
+                "⚠️ Please select your gender first!",
+                parse_mode='Markdown',
+                reply_markup=gender_keyboard()
+            )
+        else:
+            await update.message.reply_text("❌ Not in a chat. Use /search to find a partner.")
+        return
+    
+    is_premium = check_premium(user_id)
+    
+    try:
+        if is_premium:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text="⭐ *Premium*\n\n" + update.message.text,
+                parse_mode='Markdown'
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=update.message.text
+            )
+    except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
+        stop_chat(user_id)
+        remove_user(partner_id)
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
+    except Exception as e:
+        print(f"❌ Send error: {e}")
+        await update.message.reply_text("❌ Failed to send message.")
+
+# ================= REPLY HANDLER =================
+
+async def reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    partner_id = get_partner(user_id)
+    
+    if partner_id is None:
+        await update.message.reply_text("❌ You are not in a chat. Use /search.")
+        return
+    
+    try:
+        message = update.message
+        reply_to = message.reply_to_message
+        
+        replied_text = ""
+        if reply_to:
+            if reply_to.text:
+                replied_text = reply_to.text
+            elif reply_to.photo:
+                replied_text = "📸 Photo"
+            elif reply_to.video:
+                replied_text = "🎬 Video"
+            elif reply_to.sticker:
+                replied_text = "🎨 Sticker"
+            else:
+                replied_text = "📎 Media"
+        
+        is_premium = check_premium(user_id)
+        
+        if replied_text:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=f"⬆️ {replied_text}"
+            )
+        
+        if is_premium:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text="⭐ *Premium*",
+                parse_mode='Markdown'
+            )
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=message.text
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text=message.text
+            )
+        
+    except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
+        stop_chat(user_id)
+        remove_user(partner_id)
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
+    except Exception as e:
+        print(f"❌ Reply error: {e}")
+        await update.message.reply_text("❌ Failed to send reply.")
+
+# ================= MEDIA HANDLER =================
+
+async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    partner_id = get_partner(user_id)
+    
+    if partner_id is None:
+        await update.message.reply_text("❌ You are not in a chat. Use /search.")
+        return
+    
+    try:
+        message = update.message
+        is_reply = message.reply_to_message is not None
+        
+        is_premium = check_premium(user_id)
+        
+        if is_reply:
+            reply_to = message.reply_to_message
+            replied_text = ""
+            if reply_to.text:
+                replied_text = reply_to.text
+            elif reply_to.photo:
+                replied_text = "📸 Photo"
+            elif reply_to.video:
+                replied_text = "🎬 Video"
+            else:
+                replied_text = "📎 Media"
+            
+            if replied_text:
+                await context.bot.send_message(
+                    chat_id=partner_id,
+                    text=f"⬆️ {replied_text}"
+                )
+        
+        caption = message.caption or ""
+        
+        if is_premium:
+            await context.bot.send_message(
+                chat_id=partner_id,
+                text="⭐ *Premium*",
+                parse_mode='Markdown'
+            )
+        
+        if message.photo:
+            photo = message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            file_bytes = await file.download_as_bytearray()
+            await context.bot.send_photo(
+                chat_id=partner_id,
+                photo=io.BytesIO(file_bytes),
+                caption=caption
+            )
+        elif message.video:
+            video = message.video
+            file = await context.bot.get_file(video.file_id)
+            file_bytes = await file.download_as_bytearray()
+            await context.bot.send_video(
+                chat_id=partner_id,
+                video=io.BytesIO(file_bytes),
+                caption=caption
+            )
+        elif message.sticker:
+            await context.bot.send_sticker(
+                chat_id=partner_id,
+                sticker=message.sticker.file_id
+            )
+        elif message.voice:
+            voice = message.voice
+            file = await context.bot.get_file(voice.file_id)
+            file_bytes = await file.download_as_bytearray()
+            await context.bot.send_voice(
+                chat_id=partner_id,
+                voice=io.BytesIO(file_bytes),
+                caption=caption
+            )
+        elif message.animation:
+            animation = message.animation
+            file = await context.bot.get_file(animation.file_id)
+            file_bytes = await file.download_as_bytearray()
+            await context.bot.send_animation(
+                chat_id=partner_id,
+                animation=io.BytesIO(file_bytes),
+                caption=caption
+            )
+            
+    except Forbidden:
+        print(f"⚠️ Partner {partner_id} blocked the bot. Cleaning up...")
+        stop_chat(user_id)
+        remove_user(partner_id)
+        await update.message.reply_text("❌ Partner has left the chat. Use /search to find a new partner.")
+    except Exception as e:
+        print(f"❌ Media error: {e}")
+        await update.message.reply_text("❌ Failed to send media.")
+
+# ================= ERROR HANDLER =================
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("=" * 50)

@@ -19,7 +19,7 @@ def premium_keyboard():
             InlineKeyboardButton("🌟 365 Hari - 730 ⭐", callback_data="premium_365")
         ],
         [
-            InlineKeyboardButton("❓ Cara Bayar", callback_data="premium_help")
+            InlineKeyboardButton("💳 Cara Bayar", callback_data="premium_help")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

@@ -663,6 +663,7 @@ def check_premium(user_id):
         return_connection(db)
 
 def set_premium(user_id, days=30):
+    """Set user as premium - ADD days to existing premium with anti-double-payment"""
     if not DATABASE_URL:
         return False
     db = connect_db()
@@ -670,23 +671,56 @@ def set_premium(user_id, days=30):
         return False
     cursor = db.cursor()
     try:
-        cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
-        if not cursor.fetchone():
-            logger.error(f"❌ User {user_id} not found in database")
-            return False
+        # 🔥 Cek apakah user sudah premium dan masih aktif
+        cursor.execute("SELECT premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        current_expiry = result[0] if result else None
         
-        cursor.execute("""
-            UPDATE users 
-            SET premium = 1, 
-                premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
-                partner_count = 0,
-                last_partner_reset = CURRENT_TIMESTAMP
-            WHERE user_id = %s
-        """, (days, user_id))
+        # 🔥 Hitung expiry baru
+        if current_expiry:
+            cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (current_expiry,))
+            is_valid = cursor.fetchone()[0]
+            if is_valid:
+                # Premium masih aktif → tambah hari
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium = 1, 
+                        premium_expiry = premium_expiry + INTERVAL '%s days',
+                        partner_count = 0,
+                        last_partner_reset = CURRENT_TIMESTAMP
+                    WHERE user_id = %s
+                """, (days, user_id))
+                logger.info(f"✅ User {user_id} extended premium by {days} days")
+            else:
+                # Premium expired → mulai dari sekarang
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium = 1, 
+                        premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
+                        partner_count = 0,
+                        last_partner_reset = CURRENT_TIMESTAMP
+                    WHERE user_id = %s
+                """, (days, user_id))
+                logger.info(f"✅ User {user_id} renewed premium for {days} days")
+        else:
+            # Belum pernah premium
+            cursor.execute("""
+                UPDATE users 
+                SET premium = 1, 
+                    premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
+                    partner_count = 0,
+                    last_partner_reset = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (days, user_id))
+            logger.info(f"✅ User {user_id} set as premium for {days} days")
         
         db.commit()
-        return True
-            
+        
+        # 🔥 Verifikasi
+        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result and result[0] == 1
+        
     except Exception as e:
         logger.error(f"❌ Set premium error: {e}")
         db.rollback()

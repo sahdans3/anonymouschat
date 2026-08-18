@@ -79,6 +79,7 @@ def run_bot():
     app.add_handler(CommandHandler("cekpremium", cek_premium))
     app.add_handler(CommandHandler("report_bug", report_bug))
 
+    # 🔥 PAYMENT HANDLERS - PASTIKAN TERDAFTAR!
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
