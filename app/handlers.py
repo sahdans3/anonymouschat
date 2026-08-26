@@ -843,42 +843,36 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partner = find_partner(user_id)
     
     if partner:
-        start_chat_session(user_id, partner)
-        await delete_waiting_message_from_db(context, partner)
-        increment_partner_count(user_id)
-        increment_partner_count(partner)
-        
-        # 🔥 LOGGING DETAIL
-        print(f"📌 MATCH FOUND: {user_id} <-> {partner}")
-        print(f"📌 PARTNER_FOUND_MESSAGE: {PARTNER_FOUND_MESSAGE[:50]}...")
-        
-        # Kirim ke user1
-        try:
-            await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-            print(f"✅ Message sent to {user_id}")
-        except Forbidden:
-            print(f"⚠️ User {user_id} blocked the bot")
-            remove_user(user_id)
-            return
-        except Exception as e:
-            print(f"❌ Error sending to {user_id}: {type(e).__name__}: {e}")
-            return
-        
-        # Kirim ke partner
-        try:
-            await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
-            print(f"✅ Message sent to {partner}")
-        except Forbidden:
-            print(f"⚠️ User {partner} blocked the bot")
-            remove_user(partner)
-            await update.message.reply_text("❌ Partner blocked the bot. Please try again.")
-            return
-        except Exception as e:
-            print(f"❌ Error sending to {partner}: {type(e).__name__}: {e}")
-            return
-    else:
-        waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
-        save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
+    start_chat_session(user_id, partner)
+    
+    # 🔥 HAPUS PESAN WAITING DARI KEDUA USER
+    await delete_waiting_message_from_db(context, user_id)
+    await delete_waiting_message_from_db(context, partner)
+    
+    increment_partner_count(user_id)
+    increment_partner_count(partner)
+    
+    print(f"📌 MATCH FOUND: {user_id} <-> {partner}")
+    
+    # 🔥 KIRIM PESAN KE USER 1
+    try:
+        await context.bot.send_message(
+            chat_id=user_id, 
+            text=PARTNER_FOUND_MESSAGE
+        )
+        print(f"✅ Message sent to {user_id}")
+    except Exception as e:
+        print(f"❌ Error sending to {user_id}: {e}")
+    
+    # 🔥 KIRIM PESAN KE USER 2
+    try:
+        await context.bot.send_message(
+            chat_id=partner, 
+            text=PARTNER_FOUND_MESSAGE
+        )
+        print(f"✅ Message sent to {partner}")
+    except Exception as e:
+        print(f"❌ Error sending to {partner}: {e}")
 
 # ================= NEXT =================
 
