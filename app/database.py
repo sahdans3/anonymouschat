@@ -499,7 +499,8 @@ def join_queue(user_id):
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
-        is_premium = 1 if result and result[2] == 1 else 0
+        # 🔥 FIX: Convert ke BOOLEAN (True/False) bukan INTEGER (0/1)
+        is_premium = True if result and result[2] == 1 else False
         
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if cursor.fetchone():
@@ -517,7 +518,7 @@ def join_queue(user_id):
         """, (user_id, gender, preferred_gender, is_premium))
         
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue")
+        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
