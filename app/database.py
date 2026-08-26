@@ -4,7 +4,7 @@ import psycopg2.pool
 import threading
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import string
 
@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL tidak ditemukan!")
+    logger.error("❌ DATABASE_URL tidak ditemukan! Pastikan sudah di set di Railway Variables")
 else:
-    logger.info("✅ DATABASE_URL ditemukan")
+    logger.info(f"✅ DATABASE_URL ditemukan: {DATABASE_URL[:30]}...")
 
 # ================= CONNECTION POOL =================
 
@@ -39,21 +39,50 @@ def get_db_pool():
     return db_pool
 
 def connect_db():
+    """Safe database connection with error handling"""
     if not DATABASE_URL:
+        logger.error("❌ DATABASE_URL is empty or not set!")
         return None
+    
     try:
         pool = get_db_pool()
         if pool:
             try:
-                return pool.getconn()
+                conn = pool.getconn()
+                if conn:
+                    # Test koneksi
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1")
+                    cursor.close()
+                    return conn
             except psycopg2.pool.PoolError:
                 logger.warning("⚠️ Pool exhausted, creating direct connection")
-                return psycopg2.connect(DATABASE_URL)
+                conn = psycopg2.connect(DATABASE_URL)
+                return conn
         else:
-            return psycopg2.connect(DATABASE_URL)
+            logger.info("📌 Creating direct connection to database...")
+            conn = psycopg2.connect(DATABASE_URL)
+            return conn
     except Exception as e:
-        logger.error(f"⚠️ Database connection error: {e}")
+        logger.error(f"❌ Database connection error: {e}")
         return None
+
+def get_db_connection():
+    """Safe database connection with retry"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = connect_db()
+            if conn:
+                return conn
+            logger.warning(f"⚠️ Connection attempt {attempt + 1} failed, retrying...")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"❌ Connection error (attempt {attempt + 1}): {e}")
+            time.sleep(2)
+    
+    logger.error("❌ All connection attempts failed!")
+    return None
 
 def return_connection(conn):
     if conn:
@@ -98,6 +127,12 @@ def init_db():
             referral_code VARCHAR(20) UNIQUE DEFAULT NULL,
             referred_by BIGINT DEFAULT NULL,
             referral_count INT DEFAULT 0,
+            filter_gender VARCHAR(10) DEFAULT NULL,
+            last_active TIMESTAMP DEFAULT NULL,
+            total_matches INT DEFAULT 0,
+            is_banned BOOLEAN DEFAULT FALSE,
+            ban_reason TEXT DEFAULT NULL,
+            language_code VARCHAR(10) DEFAULT 'en',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -118,7 +153,9 @@ def init_db():
             user_id BIGINT UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             gender VARCHAR(10) DEFAULT NULL,
-            preferred_gender VARCHAR(10) DEFAULT NULL
+            preferred_gender VARCHAR(10) DEFAULT NULL,
+            filter_gender VARCHAR(10) DEFAULT NULL,
+            is_premium BOOLEAN DEFAULT FALSE
         )
     """)
     
@@ -129,7 +166,8 @@ def init_db():
             user2 BIGINT NOT NULL,
             start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             end_time TIMESTAMP DEFAULT NULL,
-            message_count INT DEFAULT 0
+            message_count INT DEFAULT 0,
+            last_message_at TIMESTAMP DEFAULT NULL
         )
     """)
     
@@ -140,6 +178,118 @@ def init_db():
             message_id INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            item_name VARCHAR(255) NOT NULL,
+            item_price INT NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending',
+            payment_method VARCHAR(50) DEFAULT 'stars',
+            payment_id VARCHAR(100) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT NULL,
+            completed_at TIMESTAMP DEFAULT NULL,
+            metadata JSONB DEFAULT NULL
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_log (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            action VARCHAR(50) NOT NULL,
+            purchase_id INT REFERENCES purchase(id) ON DELETE SET NULL,
+            details JSONB DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Buat index
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_filter_gender ON users(filter_gender)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_status ON purchase(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_log_user_id ON purchase_log(user_id)")
+    
+    # Buat trigger auto-match
+    cursor.execute("DROP TRIGGER IF EXISTS after_insert_waiting_queue ON waiting_queue")
+    
+    cursor.execute("""
+        CREATE OR REPLACE FUNCTION auto_match_users()
+        RETURNS TABLE(user1_id BIGINT, user2_id BIGINT) AS $$
+        DECLARE
+            v_user1 BIGINT;
+            v_user2 BIGINT;
+        BEGIN
+            SELECT user_id INTO v_user1
+            FROM waiting_queue
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED;
+            
+            IF v_user1 IS NULL THEN
+                RETURN;
+            END IF;
+            
+            SELECT user_id INTO v_user2
+            FROM waiting_queue
+            WHERE user_id <> v_user1
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED;
+            
+            IF v_user2 IS NULL THEN
+                RETURN;
+            END IF;
+            
+            IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user1 AND partner_id IS NOT NULL) THEN
+                DELETE FROM waiting_queue WHERE user_id = v_user1;
+                RETURN;
+            END IF;
+            
+            IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user2 AND partner_id IS NOT NULL) THEN
+                DELETE FROM waiting_queue WHERE user_id = v_user2;
+                RETURN;
+            END IF;
+            
+            UPDATE users SET partner_id = v_user2, searching = 0 WHERE user_id = v_user1;
+            UPDATE users SET partner_id = v_user1, searching = 0 WHERE user_id = v_user2;
+            DELETE FROM waiting_queue WHERE user_id IN (v_user1, v_user2);
+            
+            INSERT INTO chat_history(user1, user2, start_time)
+            VALUES (v_user1, v_user2, CURRENT_TIMESTAMP);
+            
+            user1_id := v_user1;
+            user2_id := v_user2;
+            RETURN NEXT;
+            
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Error: %', SQLERRM;
+            RETURN;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+    
+    cursor.execute("""
+        CREATE OR REPLACE FUNCTION trigger_auto_match()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            PERFORM auto_match_users();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+    
+    cursor.execute("""
+        CREATE TRIGGER after_insert_waiting_queue
+        AFTER INSERT ON waiting_queue
+        FOR EACH ROW
+        EXECUTE FUNCTION trigger_auto_match()
     """)
     
     db.commit()
@@ -176,640 +326,7 @@ def start_keep_alive():
     except Exception as e:
         logger.error(f"⚠️ Failed to start keep-alive: {e}")
 
-# ================= CHAT HISTORY =================
-
-def start_chat_session(user1, user2):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            INSERT INTO chat_history(user1, user2, start_time)
-            VALUES(%s, %s, CURRENT_TIMESTAMP)
-            RETURNING id
-        """, (user1, user2))
-        chat_id = cursor.fetchone()[0]
-        db.commit()
-        return chat_id
-    except Exception as e:
-        logger.error(f"❌ Start chat session error: {e}")
-        db.rollback()
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def end_chat_session(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            SELECT id, user1, user2
-            FROM chat_history
-            WHERE (user1 = %s OR user2 = %s)
-                AND end_time IS NULL
-            ORDER BY start_time DESC
-            LIMIT 1
-        """, (user_id, user_id))
-        result = cursor.fetchone()
-        if not result:
-            return None
-        chat_id, user1, user2 = result
-        cursor.execute("""
-            UPDATE chat_history 
-            SET end_time = CURRENT_TIMESTAMP
-            WHERE id = %s
-        """, (chat_id,))
-        db.commit()
-        return chat_id
-    except Exception as e:
-        logger.error(f"❌ End chat session error: {e}")
-        db.rollback()
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_chat_report(chat_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            SELECT 
-                id,
-                user1,
-                user2,
-                start_time,
-                end_time,
-                EXTRACT(EPOCH FROM (end_time - start_time)) as duration_seconds
-            FROM chat_history
-            WHERE id = %s
-        """, (chat_id,))
-        result = cursor.fetchone()
-        if not result:
-            return None
-        return {
-            'id': result[0],
-            'user1': result[1],
-            'user2': result[2],
-            'start_time': result[3],
-            'end_time': result[4],
-            'duration': int(result[5] or 0)
-        }
-    except Exception as e:
-        logger.error(f"❌ Get chat report error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-# ================= WAITING MESSAGES =================
-
-def save_waiting_message(user_id, chat_id, message_id):
-    if not DATABASE_URL:
-        return
-    db = connect_db()
-    if not db:
-        return
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            INSERT INTO waiting_messages (user_id, chat_id, message_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET 
-                chat_id = EXCLUDED.chat_id,
-                message_id = EXCLUDED.message_id
-        """, (user_id, chat_id, message_id))
-        db.commit()
-    except Exception as e:
-        logger.error(f"❌ Save waiting message error: {e}")
-        db.rollback()
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def delete_waiting_message(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            DELETE FROM waiting_messages
-            WHERE user_id = %s
-            RETURNING chat_id, message_id
-        """, (user_id,))
-        result = cursor.fetchone()
-        db.commit()
-        return result
-    except Exception as e:
-        logger.error(f"❌ Delete waiting message error: {e}")
-        db.rollback()
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-# ================= PARTNER COUNT =================
-
-def increment_partner_count(user_id):
-    if not DATABASE_URL:
-        return
-    db = connect_db()
-    if not db:
-        return
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            UPDATE users 
-            SET partner_count = partner_count + 1 
-            WHERE user_id = %s
-        """, (user_id,))
-        db.commit()
-    except Exception as e:
-        logger.error(f"❌ Increment partner count error: {e}")
-        db.rollback()
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_partner_count(user_id):
-    if not DATABASE_URL:
-        return 0
-    db = connect_db()
-    if not db:
-        return 0
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT partner_count FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            return result[0] or 0
-        return 0
-    except Exception as e:
-        logger.error(f"❌ Get partner count error: {e}")
-        return 0
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def reset_partner_count(user_id):
-    if not DATABASE_URL:
-        return
-    db = connect_db()
-    if not db:
-        return
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            UPDATE users 
-            SET partner_count = 0,
-                last_partner_reset = CURRENT_TIMESTAMP
-            WHERE user_id = %s
-        """, (user_id,))
-        db.commit()
-    except Exception as e:
-        logger.error(f"❌ Reset partner count error: {e}")
-        db.rollback()
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_last_partner_reset(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT last_partner_reset FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            return result[0]
-        return None
-    except Exception as e:
-        logger.error(f"❌ Get last reset error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def check_daily_limit(user_id, limit=6, cooldown_hours=19):
-    if not DATABASE_URL:
-        return True, 0, None
-    
-    db = connect_db()
-    if not db:
-        return True, 0, None
-    
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        is_premium = result and result[0] == 1
-        
-        if is_premium:
-            cursor.close()
-            return_connection(db)
-            return True, 0, None
-        
-        cursor.execute("SELECT partner_count, last_partner_reset FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.close()
-            return_connection(db)
-            return True, 0, None
-        
-        partner_count = result[0] or 0
-        last_reset = result[1]
-        
-        if not last_reset:
-            cursor.close()
-            return_connection(db)
-            reset_partner_count(user_id)
-            return True, 0, None
-        
-        elapsed = (datetime.now() - last_reset).total_seconds() / 3600
-        if elapsed >= cooldown_hours:
-            reset_partner_count(user_id)
-            cursor.close()
-            return_connection(db)
-            return True, 0, None
-        
-        if partner_count >= limit:
-            remaining_hours = int(cooldown_hours - elapsed)
-            cursor.close()
-            return_connection(db)
-            return False, partner_count, remaining_hours
-        
-        cursor.close()
-        return_connection(db)
-        return True, partner_count, None
-        
-    except Exception as e:
-        logger.error(f"❌ Check daily limit error: {e}")
-        cursor.close()
-        return_connection(db)
-        return True, 0, None
-
-# ================= REFERRAL =================
-
-def generate_referral_code():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-def create_referral_code(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result and result[0]:
-            return result[0]
-        
-        code = generate_referral_code()
-        while True:
-            cursor.execute("SELECT user_id FROM users WHERE referral_code=%s", (code,))
-            if not cursor.fetchone():
-                break
-            code = generate_referral_code()
-        
-        cursor.execute("UPDATE users SET referral_code=%s WHERE user_id=%s", (code, user_id))
-        db.commit()
-        return code
-    except Exception as e:
-        logger.error(f"❌ Create referral code error: {e}")
-        db.rollback()
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_referral_code(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except Exception as e:
-        logger.error(f"❌ Get referral code error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def use_referral_code(new_user_id, code):
-    if not DATABASE_URL:
-        return False, "System error"
-    db = connect_db()
-    if not db:
-        return False, "Database error"
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT user_id, referral_count FROM users WHERE referral_code=%s", (code,))
-        result = cursor.fetchone()
-        if not result:
-            return False, "Invalid referral code"
-        
-        referrer_id = result[0]
-        
-        if referrer_id == new_user_id:
-            return False, "You cannot use your own referral code"
-        
-        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (new_user_id,))
-        result = cursor.fetchone()
-        if result and result[0]:
-            return False, "You have already used a referral code"
-        
-        cursor.execute("""
-            UPDATE users 
-            SET referral_count = referral_count + 1
-            WHERE user_id = %s
-        """, (referrer_id,))
-        
-        cursor.execute("""
-            UPDATE users 
-            SET referred_by = %s 
-            WHERE user_id = %s
-        """, (referrer_id, new_user_id))
-        
-        db.commit()
-        return True, referrer_id
-    except Exception as e:
-        logger.error(f"❌ Use referral code error: {e}")
-        db.rollback()
-        return False, str(e)
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_referral_stats(user_id):
-    if not DATABASE_URL:
-        return 0, []
-    db = connect_db()
-    if not db:
-        return 0, []
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT referral_count FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        count = result[0] if result else 0
-        
-        cursor.execute("""
-            SELECT user_id, created_at 
-            FROM users 
-            WHERE referred_by = %s 
-            ORDER BY created_at DESC 
-            LIMIT 10
-        """, (user_id,))
-        referred = cursor.fetchall()
-        
-        return count, referred
-    except Exception as e:
-        logger.error(f"❌ Get referral stats error: {e}")
-        return 0, []
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def is_referred(user_id):
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result and result[0] is not None
-    except Exception as e:
-        logger.error(f"❌ Is referred error: {e}")
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_referrer(user_id):
-    if not DATABASE_URL:
-        return None
-    db = connect_db()
-    if not db:
-        return None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-    except Exception as e:
-        logger.error(f"❌ Get referrer error: {e}")
-        return None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-# ================= PREMIUM =================
-
-def check_premium(user_id):
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if not result:
-            return False
-        premium, expiry = result
-        if premium == 1:
-            if expiry:
-                cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (expiry,))
-                is_valid = cursor.fetchone()[0]
-                if not is_valid:
-                    cursor.execute("UPDATE users SET premium=0 WHERE user_id=%s", (user_id,))
-                    db.commit()
-                    return False
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"❌ Check premium error: {e}")
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def set_premium(user_id, days=30):
-    """Set user as premium - ADD days to existing premium with anti-double-payment"""
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        # 🔥 Cek apakah user sudah premium dan masih aktif
-        cursor.execute("SELECT premium_expiry FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        current_expiry = result[0] if result else None
-        
-        # 🔥 Hitung expiry baru
-        if current_expiry:
-            cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (current_expiry,))
-            is_valid = cursor.fetchone()[0]
-            if is_valid:
-                # Premium masih aktif → tambah hari
-                cursor.execute("""
-                    UPDATE users 
-                    SET premium = 1, 
-                        premium_expiry = premium_expiry + INTERVAL '%s days',
-                        partner_count = 0,
-                        last_partner_reset = CURRENT_TIMESTAMP
-                    WHERE user_id = %s
-                """, (days, user_id))
-                logger.info(f"✅ User {user_id} extended premium by {days} days")
-            else:
-                # Premium expired → mulai dari sekarang
-                cursor.execute("""
-                    UPDATE users 
-                    SET premium = 1, 
-                        premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
-                        partner_count = 0,
-                        last_partner_reset = CURRENT_TIMESTAMP
-                    WHERE user_id = %s
-                """, (days, user_id))
-                logger.info(f"✅ User {user_id} renewed premium for {days} days")
-        else:
-            # Belum pernah premium
-            cursor.execute("""
-                UPDATE users 
-                SET premium = 1, 
-                    premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
-                    partner_count = 0,
-                    last_partner_reset = CURRENT_TIMESTAMP
-                WHERE user_id = %s
-            """, (days, user_id))
-            logger.info(f"✅ User {user_id} set as premium for {days} days")
-        
-        db.commit()
-        
-        # 🔥 Verifikasi
-        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result and result[0] == 1
-        
-    except Exception as e:
-        logger.error(f"❌ Set premium error: {e}")
-        db.rollback()
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_premium_status(user_id):
-    if not DATABASE_URL:
-        return False, None
-    db = connect_db()
-    if not db:
-        return False, None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            return result[0] == 1, result[1]
-        return False, None
-    except Exception as e:
-        logger.error(f"❌ Get premium status error: {e}")
-        return False, None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def set_gender(user_id, gender):
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        cursor.execute("UPDATE users SET gender=%s WHERE user_id=%s", (gender, user_id))
-        db.commit()
-        logger.info(f"✅ User {user_id} set gender to {gender}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Set gender error: {e}")
-        db.rollback()
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def set_preferred_gender(user_id, gender):
-    if not DATABASE_URL:
-        return False
-    db = connect_db()
-    if not db:
-        return False
-    cursor = db.cursor()
-    try:
-        cursor.execute("UPDATE users SET preferred_gender=%s WHERE user_id=%s", (gender, user_id))
-        db.commit()
-        logger.info(f"✅ User {user_id} set preferred gender to {gender}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Set preferred gender error: {e}")
-        db.rollback()
-        return False
-    finally:
-        cursor.close()
-        return_connection(db)
-
-def get_user_gender(user_id):
-    if not DATABASE_URL:
-        return None, None
-    db = connect_db()
-    if not db:
-        return None, None
-    cursor = db.cursor()
-    try:
-        cursor.execute("SELECT gender, preferred_gender FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            return result[0], result[1]
-        return None, None
-    except Exception as e:
-        logger.error(f"❌ Get user gender error: {e}")
-        return None, None
-    finally:
-        cursor.close()
-        return_connection(db)
-
-# ================= USER =================
+# ================= USER FUNCTIONS =================
 
 def register_user(user_id):
     if not DATABASE_URL:
@@ -906,13 +423,13 @@ def join_queue(user_id):
             return
         
         cursor.execute("""
-            INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at) 
-            VALUES(%s, %s, %s, CURRENT_TIMESTAMP)
+            INSERT INTO waiting_queue(user_id, gender, preferred_gender, created_at, is_premium) 
+            VALUES(%s, %s, %s, CURRENT_TIMESTAMP, %s)
             ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, gender, preferred_gender))
+        """, (user_id, gender, preferred_gender, is_premium))
         
         db.commit()
-        logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
+        logger.info(f"✅ User {user_id} joined queue")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -938,7 +455,6 @@ def leave_queue(user_id):
         return_connection(db)
 
 def find_partner(user_id):
-    """Find partner - INSTAN MATCH, siapa saja"""
     if not DATABASE_URL:
         return None
     
@@ -1078,7 +594,257 @@ def remove_user(user_id):
         cursor.close()
         return_connection(db)
 
-def get_user_status(user_id):
+def get_user_gender(user_id):
+    if not DATABASE_URL:
+        return None, None
+    db = connect_db()
+    if not db:
+        return None, None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT gender, preferred_gender FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0], result[1]
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ Get user gender error: {e}")
+        return None, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_gender(user_id, gender):
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET gender=%s WHERE user_id=%s", (gender, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set gender to {gender}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set gender error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_preferred_gender(user_id, gender):
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET preferred_gender=%s WHERE user_id=%s", (gender, user_id))
+        db.commit()
+        logger.info(f"✅ User {user_id} set preferred gender to {gender}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Set preferred gender error: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= PREMIUM FUNCTIONS =================
+
+def check_premium(user_id):
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            return False
+        premium, expiry = result
+        if premium == 1:
+            if expiry:
+                cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (expiry,))
+                is_valid = cursor.fetchone()[0]
+                if not is_valid:
+                    cursor.execute("UPDATE users SET premium=0 WHERE user_id=%s", (user_id,))
+                    db.commit()
+                    return False
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"❌ Check premium error: {e}")
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def set_premium(user_id, days=30):
+    """Set user as premium - FIXED VERSION"""
+    if not DATABASE_URL:
+        logger.error("❌ DATABASE_URL not set")
+        return False
+    
+    db = connect_db()
+    if not db:
+        logger.error(f"❌ Cannot connect to database for user {user_id}")
+        return False
+    
+    cursor = db.cursor()
+    try:
+        # 🔥 CEK APAKAH USER ADA, JIKA TIDAK, REGISTER DULU
+        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+        if not cursor.fetchone():
+            logger.info(f"📌 User {user_id} not found, registering first...")
+            cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
+            db.commit()
+        
+        # 🔥 CEK PREMIUM EXISTING
+        cursor.execute("SELECT premium_expiry FROM users WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
+        current_expiry = result[0] if result else None
+        
+        # 🔥 HITUNG EXPIRY BARU
+        if current_expiry:
+            cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (current_expiry,))
+            is_valid = cursor.fetchone()[0]
+            if is_valid:
+                # Premium masih aktif → tambah hari
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium = 1, 
+                        premium_expiry = premium_expiry + INTERVAL '%s days',
+                        partner_count = 0,
+                        last_partner_reset = CURRENT_TIMESTAMP
+                    WHERE user_id = %s
+                """, (days, user_id))
+                logger.info(f"✅ User {user_id} extended premium by {days} days")
+            else:
+                # Premium expired → mulai dari sekarang
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium = 1, 
+                        premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
+                        partner_count = 0,
+                        last_partner_reset = CURRENT_TIMESTAMP
+                    WHERE user_id = %s
+                """, (days, user_id))
+                logger.info(f"✅ User {user_id} renewed premium for {days} days")
+        else:
+            # Belum pernah premium
+            cursor.execute("""
+                UPDATE users 
+                SET premium = 1, 
+                    premium_expiry = CURRENT_TIMESTAMP + INTERVAL '%s days',
+                    partner_count = 0,
+                    last_partner_reset = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (days, user_id))
+            logger.info(f"✅ User {user_id} set as premium for {days} days")
+        
+        db.commit()
+        
+        # 🔥 VERIFIKASI
+        cursor.execute("SELECT premium FROM users WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
+        success = result and result[0] == 1
+        logger.info(f"📌 Premium verification for {user_id}: {'✅ SUCCESS' if success else '❌ FAILED'}")
+        return success
+        
+    except Exception as e:
+        logger.error(f"❌ Set premium error for {user_id}: {e}")
+        db.rollback()
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_premium_status(user_id):
+    if not DATABASE_URL:
+        return False, None
+    db = connect_db()
+    if not db:
+        return False, None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium, premium_expiry FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0] == 1, result[1]
+        return False, None
+    except Exception as e:
+        logger.error(f"❌ Get premium status error: {e}")
+        return False, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= PARTNER COUNT =================
+
+def increment_partner_count(user_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("UPDATE users SET partner_count = partner_count + 1 WHERE user_id = %s", (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Increment partner count error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_partner_count(user_id):
+    if not DATABASE_URL:
+        return 0
+    db = connect_db()
+    if not db:
+        return 0
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT partner_count FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else 0
+    except Exception as e:
+        logger.error(f"❌ Get partner count error: {e}")
+        return 0
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def reset_partner_count(user_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            UPDATE users 
+            SET partner_count = 0, last_partner_reset = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (user_id,))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Reset partner count error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_last_partner_reset(user_id):
     if not DATABASE_URL:
         return None
     db = connect_db()
@@ -1086,11 +852,337 @@ def get_user_status(user_id):
         return None
     cursor = db.cursor()
     try:
-        cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
+        cursor.execute("SELECT last_partner_reset FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get last reset error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def check_daily_limit(user_id, limit=6, cooldown_hours=19):
+    if not DATABASE_URL:
+        return True, 0, None
+    
+    db = connect_db()
+    if not db:
+        return True, 0, None
+    
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        is_premium = result and result[0] == 1
+        
+        if is_premium:
+            return True, 0, None
+        
+        cursor.execute("SELECT partner_count, last_partner_reset FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            return True, 0, None
+        
+        partner_count = result[0] or 0
+        last_reset = result[1]
+        
+        if not last_reset:
+            reset_partner_count(user_id)
+            return True, 0, None
+        
+        elapsed = (datetime.now() - last_reset).total_seconds() / 3600
+        if elapsed >= cooldown_hours:
+            reset_partner_count(user_id)
+            return True, 0, None
+        
+        if partner_count >= limit:
+            remaining_hours = int(cooldown_hours - elapsed)
+            return False, partner_count, remaining_hours
+        
+        return True, partner_count, None
+        
+    except Exception as e:
+        logger.error(f"❌ Check daily limit error: {e}")
+        return True, 0, None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= CHAT HISTORY =================
+
+def start_chat_session(user1, user2):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO chat_history(user1, user2, start_time)
+            VALUES(%s, %s, CURRENT_TIMESTAMP)
+            RETURNING id
+        """, (user1, user2))
+        chat_id = cursor.fetchone()[0]
+        db.commit()
+        return chat_id
+    except Exception as e:
+        logger.error(f"❌ Start chat session error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def end_chat_session(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, user1, user2
+            FROM chat_history
+            WHERE (user1 = %s OR user2 = %s) AND end_time IS NULL
+            ORDER BY start_time DESC
+            LIMIT 1
+        """, (user_id, user_id))
+        result = cursor.fetchone()
+        if not result:
+            return None
+        chat_id, user1, user2 = result
+        cursor.execute("UPDATE chat_history SET end_time = CURRENT_TIMESTAMP WHERE id = %s", (chat_id,))
+        db.commit()
+        return chat_id
+    except Exception as e:
+        logger.error(f"❌ End chat session error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_chat_report(chat_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            SELECT id, user1, user2, start_time, end_time,
+                   EXTRACT(EPOCH FROM (end_time - start_time)) as duration_seconds
+            FROM chat_history WHERE id = %s
+        """, (chat_id,))
+        result = cursor.fetchone()
+        if not result:
+            return None
+        return {
+            'id': result[0],
+            'user1': result[1],
+            'user2': result[2],
+            'start_time': result[3],
+            'end_time': result[4],
+            'duration': int(result[5] or 0)
+        }
+    except Exception as e:
+        logger.error(f"❌ Get chat report error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= WAITING MESSAGES =================
+
+def save_waiting_message(user_id, chat_id, message_id):
+    if not DATABASE_URL:
+        return
+    db = connect_db()
+    if not db:
+        return
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO waiting_messages (user_id, chat_id, message_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET chat_id = EXCLUDED.chat_id, message_id = EXCLUDED.message_id
+        """, (user_id, chat_id, message_id))
+        db.commit()
+    except Exception as e:
+        logger.error(f"❌ Save waiting message error: {e}")
+        db.rollback()
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def delete_waiting_message(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("DELETE FROM waiting_messages WHERE user_id = %s RETURNING chat_id, message_id", (user_id,))
+        result = cursor.fetchone()
+        db.commit()
         return result
     except Exception as e:
-        logger.error(f"❌ Get user status error: {e}")
+        logger.error(f"❌ Delete waiting message error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+# ================= REFERRAL =================
+
+def generate_referral_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+def create_referral_code(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            return result[0]
+        
+        code = generate_referral_code()
+        while True:
+            cursor.execute("SELECT user_id FROM users WHERE referral_code=%s", (code,))
+            if not cursor.fetchone():
+                break
+            code = generate_referral_code()
+        
+        cursor.execute("UPDATE users SET referral_code=%s WHERE user_id=%s", (code, user_id))
+        db.commit()
+        return code
+    except Exception as e:
+        logger.error(f"❌ Create referral code error: {e}")
+        db.rollback()
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referral_code(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_code FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get referral code error: {e}")
+        return None
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def use_referral_code(new_user_id, code):
+    if not DATABASE_URL:
+        return False, "System error"
+    db = connect_db()
+    if not db:
+        return False, "Database error"
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT user_id, referral_count FROM users WHERE referral_code=%s", (code,))
+        result = cursor.fetchone()
+        if not result:
+            return False, "Invalid referral code"
+        
+        referrer_id = result[0]
+        if referrer_id == new_user_id:
+            return False, "You cannot use your own referral code"
+        
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (new_user_id,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            return False, "You have already used a referral code"
+        
+        cursor.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = %s", (referrer_id,))
+        cursor.execute("UPDATE users SET referred_by = %s WHERE user_id = %s", (referrer_id, new_user_id))
+        db.commit()
+        return True, referrer_id
+    except Exception as e:
+        logger.error(f"❌ Use referral code error: {e}")
+        db.rollback()
+        return False, str(e)
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referral_stats(user_id):
+    if not DATABASE_URL:
+        return 0, []
+    db = connect_db()
+    if not db:
+        return 0, []
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referral_count FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        count = result[0] if result else 0
+        
+        cursor.execute("""
+            SELECT user_id, created_at FROM users 
+            WHERE referred_by = %s ORDER BY created_at DESC LIMIT 10
+        """, (user_id,))
+        referred = cursor.fetchall()
+        return count, referred
+    except Exception as e:
+        logger.error(f"❌ Get referral stats error: {e}")
+        return 0, []
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def is_referred(user_id):
+    if not DATABASE_URL:
+        return False
+    db = connect_db()
+    if not db:
+        return False
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result and result[0] is not None
+    except Exception as e:
+        logger.error(f"❌ Is referred error: {e}")
+        return False
+    finally:
+        cursor.close()
+        return_connection(db)
+
+def get_referrer(user_id):
+    if not DATABASE_URL:
+        return None
+    db = connect_db()
+    if not db:
+        return None
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT referred_by FROM users WHERE user_id=%s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logger.error(f"❌ Get referrer error: {e}")
         return None
     finally:
         cursor.close()
