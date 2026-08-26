@@ -542,15 +542,17 @@ def find_partner(user_id):
     cursor = db.cursor()
     
     try:
-        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (user_id,))
-        user_check = cursor.fetchone()
-        if user_check and user_check[0] is not None:
+        # Cek apakah user sudah punya partner
+        cursor.execute("SELECT partner_id FROM users WHERE user_id=%s AND partner_id IS NOT NULL", (user_id,))
+        if cursor.fetchone():
             return None
         
+        # Cek apakah user ada di waiting_queue
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
         if not cursor.fetchone():
             return None
         
+        # 🔥 CARI PARTNER (tanpa trigger)
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
@@ -567,19 +569,26 @@ def find_partner(user_id):
         
         partner_id = partner[0]
         
-        cursor.execute("SELECT partner_id, searching FROM users WHERE user_id=%s", (partner_id,))
-        partner_check = cursor.fetchone()
-        if partner_check and partner_check[0] is not None:
+        # Cek apakah partner sudah punya partner
+        cursor.execute("SELECT partner_id FROM users WHERE user_id=%s AND partner_id IS NOT NULL", (partner_id,))
+        if cursor.fetchone():
             cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (partner_id,))
             db.commit()
             return None
         
+        # 🔥 MATCH!
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
         cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
         cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
         
+        # Catat di chat_history
+        cursor.execute("""
+            INSERT INTO chat_history(user1, user2, start_time)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+        """, (user_id, partner_id))
+        
         db.commit()
-        logger.info(f"⚡ INSTANT MATCH: {user_id} <-> {partner_id}")
+        logger.info(f"⚡ MATCH: {user_id} <-> {partner_id}")
         return partner_id
         
     except Exception as e:
