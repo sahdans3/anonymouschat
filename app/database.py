@@ -113,6 +113,7 @@ def init_db():
     
     cursor = db.cursor()
     
+    # ============ CREATE TABLES ============
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -127,12 +128,6 @@ def init_db():
             referral_code VARCHAR(20) UNIQUE DEFAULT NULL,
             referred_by BIGINT DEFAULT NULL,
             referral_count INT DEFAULT 0,
-            filter_gender VARCHAR(10) DEFAULT NULL,
-            last_active TIMESTAMP DEFAULT NULL,
-            total_matches INT DEFAULT 0,
-            is_banned BOOLEAN DEFAULT FALSE,
-            ban_reason TEXT DEFAULT NULL,
-            language_code VARCHAR(10) DEFAULT 'en',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -153,9 +148,7 @@ def init_db():
             user_id BIGINT UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             gender VARCHAR(10) DEFAULT NULL,
-            preferred_gender VARCHAR(10) DEFAULT NULL,
-            filter_gender VARCHAR(10) DEFAULT NULL,
-            is_premium BOOLEAN DEFAULT FALSE
+            preferred_gender VARCHAR(10) DEFAULT NULL
         )
     """)
     
@@ -166,8 +159,7 @@ def init_db():
             user2 BIGINT NOT NULL,
             start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             end_time TIMESTAMP DEFAULT NULL,
-            message_count INT DEFAULT 0,
-            last_message_at TIMESTAMP DEFAULT NULL
+            message_count INT DEFAULT 0
         )
     """)
     
@@ -208,15 +200,111 @@ def init_db():
         )
     """)
     
-    # Buat index
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_filter_gender ON users(filter_gender)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase(user_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_status ON purchase(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_log_user_id ON purchase_log(user_id)")
+    # ============ TAMBAHKAN KOLOM BARU (SEBELUM INDEX) ============
+    logger.info("📌 Adding missing columns...")
     
-    # Buat trigger auto-match
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS filter_gender VARCHAR(10) DEFAULT NULL")
+        logger.info("✅ filter_gender added")
+    except Exception as e:
+        logger.warning(f"⚠️ filter_gender: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NULL")
+        logger.info("✅ last_active added")
+    except Exception as e:
+        logger.warning(f"⚠️ last_active: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_matches INT DEFAULT 0")
+        logger.info("✅ total_matches added")
+    except Exception as e:
+        logger.warning(f"⚠️ total_matches: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE")
+        logger.info("✅ is_banned added")
+    except Exception as e:
+        logger.warning(f"⚠️ is_banned: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT DEFAULT NULL")
+        logger.info("✅ ban_reason added")
+    except Exception as e:
+        logger.warning(f"⚠️ ban_reason: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language_code VARCHAR(10) DEFAULT 'en'")
+        logger.info("✅ language_code added")
+    except Exception as e:
+        logger.warning(f"⚠️ language_code: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE waiting_queue ADD COLUMN IF NOT EXISTS filter_gender VARCHAR(10) DEFAULT NULL")
+        logger.info("✅ waiting_queue.filter_gender added")
+    except Exception as e:
+        logger.warning(f"⚠️ waiting_queue.filter_gender: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE waiting_queue ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE")
+        logger.info("✅ waiting_queue.is_premium added")
+    except Exception as e:
+        logger.warning(f"⚠️ waiting_queue.is_premium: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS messages_count INT DEFAULT 0")
+        logger.info("✅ chat_history.messages_count added")
+    except Exception as e:
+        logger.warning(f"⚠️ chat_history.messages_count: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP DEFAULT NULL")
+        logger.info("✅ chat_history.last_message_at added")
+    except Exception as e:
+        logger.warning(f"⚠️ chat_history.last_message_at: {e}")
+    
+    # ============ BUAT INDEX (SETELAH KOLOM ADA) ============
+    logger.info("📌 Creating indexes...")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_filter_gender ON users(filter_gender)")
+        logger.info("✅ idx_users_filter_gender created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_users_filter_gender: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")
+        logger.info("✅ idx_users_last_active created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_users_last_active: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)")
+        logger.info("✅ idx_users_is_banned created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_users_is_banned: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase(user_id)")
+        logger.info("✅ idx_purchase_user_id created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_purchase_user_id: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_status ON purchase(status)")
+        logger.info("✅ idx_purchase_status created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_purchase_status: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_log_user_id ON purchase_log(user_id)")
+        logger.info("✅ idx_purchase_log_user_id created")
+    except Exception as e:
+        logger.warning(f"⚠️ idx_purchase_log_user_id: {e}")
+    
+    # ============ AUTO-MATCH TRIGGER ============
+    logger.info("📌 Creating auto-match trigger...")
+    
     cursor.execute("DROP TRIGGER IF EXISTS after_insert_waiting_queue ON waiting_queue")
     
     cursor.execute("""
@@ -295,7 +383,7 @@ def init_db():
     db.commit()
     cursor.close()
     return_connection(db)
-    logger.info("✅ Database tables created")
+    logger.info("✅ Database tables and indexes created")
 
 # ================= KEEP ALIVE =================
 
