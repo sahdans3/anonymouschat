@@ -17,7 +17,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     logger.error("❌ DATABASE_URL tidak ditemukan! Pastikan sudah di set di Railway Variables")
 else:
-    logger.info(f"✅ DATABASE_URL ditemukan: {DATABASE_URL[:30]}...")
+    logger.info(f"✅ DATABASE_URL ditemukan")
 
 # ================= CONNECTION POOL =================
 
@@ -50,7 +50,6 @@ def connect_db():
             try:
                 conn = pool.getconn()
                 if conn:
-                    # Test koneksi
                     cursor = conn.cursor()
                     cursor.execute("SELECT 1")
                     cursor.close()
@@ -67,23 +66,6 @@ def connect_db():
         logger.error(f"❌ Database connection error: {e}")
         return None
 
-def get_db_connection():
-    """Safe database connection with retry"""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            conn = connect_db()
-            if conn:
-                return conn
-            logger.warning(f"⚠️ Connection attempt {attempt + 1} failed, retrying...")
-            time.sleep(2)
-        except Exception as e:
-            logger.error(f"❌ Connection error (attempt {attempt + 1}): {e}")
-            time.sleep(2)
-    
-    logger.error("❌ All connection attempts failed!")
-    return None
-
 def return_connection(conn):
     if conn:
         try:
@@ -99,7 +81,7 @@ def return_connection(conn):
             except:
                 pass
 
-# ================= CREATE TABLES =================
+# ================= INIT DATABASE =================
 
 def init_db():
     if not DATABASE_URL:
@@ -114,6 +96,8 @@ def init_db():
     cursor = db.cursor()
     
     # ============ CREATE TABLES ============
+    logger.info("📌 Creating tables...")
+    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -200,190 +184,219 @@ def init_db():
         )
     """)
     
-    # ============ TAMBAHKAN KOLOM BARU (SEBELUM INDEX) ============
+    # ============ ADD MISSING COLUMNS ============
     logger.info("📌 Adding missing columns...")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS filter_gender VARCHAR(10) DEFAULT NULL")
-        logger.info("✅ filter_gender added")
+        logger.info("   ✅ filter_gender added")
     except Exception as e:
-        logger.warning(f"⚠️ filter_gender: {e}")
+        logger.warning(f"   ⚠️ filter_gender: {e}")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NULL")
-        logger.info("✅ last_active added")
+        logger.info("   ✅ last_active added")
     except Exception as e:
-        logger.warning(f"⚠️ last_active: {e}")
+        logger.warning(f"   ⚠️ last_active: {e}")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_matches INT DEFAULT 0")
-        logger.info("✅ total_matches added")
+        logger.info("   ✅ total_matches added")
     except Exception as e:
-        logger.warning(f"⚠️ total_matches: {e}")
+        logger.warning(f"   ⚠️ total_matches: {e}")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE")
-        logger.info("✅ is_banned added")
+        logger.info("   ✅ is_banned added")
     except Exception as e:
-        logger.warning(f"⚠️ is_banned: {e}")
+        logger.warning(f"   ⚠️ is_banned: {e}")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT DEFAULT NULL")
-        logger.info("✅ ban_reason added")
+        logger.info("   ✅ ban_reason added")
     except Exception as e:
-        logger.warning(f"⚠️ ban_reason: {e}")
+        logger.warning(f"   ⚠️ ban_reason: {e}")
     
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language_code VARCHAR(10) DEFAULT 'en'")
-        logger.info("✅ language_code added")
+        logger.info("   ✅ language_code added")
     except Exception as e:
-        logger.warning(f"⚠️ language_code: {e}")
+        logger.warning(f"   ⚠️ language_code: {e}")
     
     try:
         cursor.execute("ALTER TABLE waiting_queue ADD COLUMN IF NOT EXISTS filter_gender VARCHAR(10) DEFAULT NULL")
-        logger.info("✅ waiting_queue.filter_gender added")
+        logger.info("   ✅ waiting_queue.filter_gender added")
     except Exception as e:
-        logger.warning(f"⚠️ waiting_queue.filter_gender: {e}")
+        logger.warning(f"   ⚠️ waiting_queue.filter_gender: {e}")
     
     try:
         cursor.execute("ALTER TABLE waiting_queue ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE")
-        logger.info("✅ waiting_queue.is_premium added")
+        logger.info("   ✅ waiting_queue.is_premium added")
     except Exception as e:
-        logger.warning(f"⚠️ waiting_queue.is_premium: {e}")
+        logger.warning(f"   ⚠️ waiting_queue.is_premium: {e}")
     
     try:
         cursor.execute("ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS messages_count INT DEFAULT 0")
-        logger.info("✅ chat_history.messages_count added")
+        logger.info("   ✅ chat_history.messages_count added")
     except Exception as e:
-        logger.warning(f"⚠️ chat_history.messages_count: {e}")
+        logger.warning(f"   ⚠️ chat_history.messages_count: {e}")
     
     try:
         cursor.execute("ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP DEFAULT NULL")
-        logger.info("✅ chat_history.last_message_at added")
+        logger.info("   ✅ chat_history.last_message_at added")
     except Exception as e:
-        logger.warning(f"⚠️ chat_history.last_message_at: {e}")
+        logger.warning(f"   ⚠️ chat_history.last_message_at: {e}")
     
-    # ============ BUAT INDEX (SETELAH KOLOM ADA) ============
+    # ============ CREATE INDEXES ============
     logger.info("📌 Creating indexes...")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_filter_gender ON users(filter_gender)")
-        logger.info("✅ idx_users_filter_gender created")
+        logger.info("   ✅ idx_users_filter_gender")
     except Exception as e:
-        logger.warning(f"⚠️ idx_users_filter_gender: {e}")
+        logger.warning(f"   ⚠️ idx_users_filter_gender: {e}")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")
-        logger.info("✅ idx_users_last_active created")
+        logger.info("   ✅ idx_users_last_active")
     except Exception as e:
-        logger.warning(f"⚠️ idx_users_last_active: {e}")
+        logger.warning(f"   ⚠️ idx_users_last_active: {e}")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)")
-        logger.info("✅ idx_users_is_banned created")
+        logger.info("   ✅ idx_users_is_banned")
     except Exception as e:
-        logger.warning(f"⚠️ idx_users_is_banned: {e}")
+        logger.warning(f"   ⚠️ idx_users_is_banned: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_premium ON users(premium)")
+        logger.info("   ✅ idx_users_premium")
+    except Exception as e:
+        logger.warning(f"   ⚠️ idx_users_premium: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_waiting_queue_created_at ON waiting_queue(created_at)")
+        logger.info("   ✅ idx_waiting_queue_created_at")
+    except Exception as e:
+        logger.warning(f"   ⚠️ idx_waiting_queue_created_at: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user1 ON chat_history(user1)")
+        logger.info("   ✅ idx_chat_history_user1")
+    except Exception as e:
+        logger.warning(f"   ⚠️ idx_chat_history_user1: {e}")
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user2 ON chat_history(user2)")
+        logger.info("   ✅ idx_chat_history_user2")
+    except Exception as e:
+        logger.warning(f"   ⚠️ idx_chat_history_user2: {e}")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase(user_id)")
-        logger.info("✅ idx_purchase_user_id created")
+        logger.info("   ✅ idx_purchase_user_id")
     except Exception as e:
-        logger.warning(f"⚠️ idx_purchase_user_id: {e}")
+        logger.warning(f"   ⚠️ idx_purchase_user_id: {e}")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_status ON purchase(status)")
-        logger.info("✅ idx_purchase_status created")
+        logger.info("   ✅ idx_purchase_status")
     except Exception as e:
-        logger.warning(f"⚠️ idx_purchase_status: {e}")
+        logger.warning(f"   ⚠️ idx_purchase_status: {e}")
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_log_user_id ON purchase_log(user_id)")
-        logger.info("✅ idx_purchase_log_user_id created")
+        logger.info("   ✅ idx_purchase_log_user_id")
     except Exception as e:
-        logger.warning(f"⚠️ idx_purchase_log_user_id: {e}")
+        logger.warning(f"   ⚠️ idx_purchase_log_user_id: {e}")
     
     # ============ AUTO-MATCH TRIGGER ============
     logger.info("📌 Creating auto-match trigger...")
     
-    cursor.execute("DROP TRIGGER IF EXISTS after_insert_waiting_queue ON waiting_queue")
-    
-    cursor.execute("""
-        CREATE OR REPLACE FUNCTION auto_match_users()
-        RETURNS TABLE(user1_id BIGINT, user2_id BIGINT) AS $$
-        DECLARE
-            v_user1 BIGINT;
-            v_user2 BIGINT;
-        BEGIN
-            SELECT user_id INTO v_user1
-            FROM waiting_queue
-            ORDER BY created_at ASC, id ASC
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED;
-            
-            IF v_user1 IS NULL THEN
+    try:
+        cursor.execute("DROP TRIGGER IF EXISTS after_insert_waiting_queue ON waiting_queue")
+        
+        cursor.execute("""
+            CREATE OR REPLACE FUNCTION auto_match_users()
+            RETURNS TABLE(user1_id BIGINT, user2_id BIGINT) AS $$
+            DECLARE
+                v_user1 BIGINT;
+                v_user2 BIGINT;
+            BEGIN
+                SELECT user_id INTO v_user1
+                FROM waiting_queue
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED;
+                
+                IF v_user1 IS NULL THEN
+                    RETURN;
+                END IF;
+                
+                SELECT user_id INTO v_user2
+                FROM waiting_queue
+                WHERE user_id <> v_user1
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED;
+                
+                IF v_user2 IS NULL THEN
+                    RETURN;
+                END IF;
+                
+                IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user1 AND partner_id IS NOT NULL) THEN
+                    DELETE FROM waiting_queue WHERE user_id = v_user1;
+                    RETURN;
+                END IF;
+                
+                IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user2 AND partner_id IS NOT NULL) THEN
+                    DELETE FROM waiting_queue WHERE user_id = v_user2;
+                    RETURN;
+                END IF;
+                
+                UPDATE users SET partner_id = v_user2, searching = 0 WHERE user_id = v_user1;
+                UPDATE users SET partner_id = v_user1, searching = 0 WHERE user_id = v_user2;
+                DELETE FROM waiting_queue WHERE user_id IN (v_user1, v_user2);
+                
+                INSERT INTO chat_history(user1, user2, start_time)
+                VALUES (v_user1, v_user2, CURRENT_TIMESTAMP);
+                
+                user1_id := v_user1;
+                user2_id := v_user2;
+                RETURN NEXT;
+                
+            EXCEPTION WHEN OTHERS THEN
+                RAISE NOTICE 'Error: %', SQLERRM;
                 RETURN;
-            END IF;
-            
-            SELECT user_id INTO v_user2
-            FROM waiting_queue
-            WHERE user_id <> v_user1
-            ORDER BY created_at ASC, id ASC
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED;
-            
-            IF v_user2 IS NULL THEN
-                RETURN;
-            END IF;
-            
-            IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user1 AND partner_id IS NOT NULL) THEN
-                DELETE FROM waiting_queue WHERE user_id = v_user1;
-                RETURN;
-            END IF;
-            
-            IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user2 AND partner_id IS NOT NULL) THEN
-                DELETE FROM waiting_queue WHERE user_id = v_user2;
-                RETURN;
-            END IF;
-            
-            UPDATE users SET partner_id = v_user2, searching = 0 WHERE user_id = v_user1;
-            UPDATE users SET partner_id = v_user1, searching = 0 WHERE user_id = v_user2;
-            DELETE FROM waiting_queue WHERE user_id IN (v_user1, v_user2);
-            
-            INSERT INTO chat_history(user1, user2, start_time)
-            VALUES (v_user1, v_user2, CURRENT_TIMESTAMP);
-            
-            user1_id := v_user1;
-            user2_id := v_user2;
-            RETURN NEXT;
-            
-        EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'Error: %', SQLERRM;
-            RETURN;
-        END;
-        $$ LANGUAGE plpgsql;
-    """)
-    
-    cursor.execute("""
-        CREATE OR REPLACE FUNCTION trigger_auto_match()
-        RETURNS TRIGGER AS $$
-        BEGIN
-            PERFORM auto_match_users();
-            RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-    """)
-    
-    cursor.execute("""
-        CREATE TRIGGER after_insert_waiting_queue
-        AFTER INSERT ON waiting_queue
-        FOR EACH ROW
-        EXECUTE FUNCTION trigger_auto_match()
-    """)
+            END;
+            $$ LANGUAGE plpgsql;
+        """)
+        
+        cursor.execute("""
+            CREATE OR REPLACE FUNCTION trigger_auto_match()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                PERFORM auto_match_users();
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        """)
+        
+        cursor.execute("""
+            CREATE TRIGGER after_insert_waiting_queue
+            AFTER INSERT ON waiting_queue
+            FOR EACH ROW
+            EXECUTE FUNCTION trigger_auto_match()
+        """)
+        
+        logger.info("   ✅ Auto-match trigger created")
+    except Exception as e:
+        logger.warning(f"   ⚠️ Trigger error: {e}")
     
     db.commit()
     cursor.close()
     return_connection(db)
-    logger.info("✅ Database tables and indexes created")
+    logger.info("✅ Database initialization complete!")
 
 # ================= KEEP ALIVE =================
 
@@ -805,7 +818,6 @@ def set_premium(user_id, days=30):
             cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (current_expiry,))
             is_valid = cursor.fetchone()[0]
             if is_valid:
-                # Premium masih aktif → tambah hari
                 cursor.execute("""
                     UPDATE users 
                     SET premium = 1, 
@@ -816,7 +828,6 @@ def set_premium(user_id, days=30):
                 """, (days, user_id))
                 logger.info(f"✅ User {user_id} extended premium by {days} days")
             else:
-                # Premium expired → mulai dari sekarang
                 cursor.execute("""
                     UPDATE users 
                     SET premium = 1, 
@@ -827,7 +838,6 @@ def set_premium(user_id, days=30):
                 """, (days, user_id))
                 logger.info(f"✅ User {user_id} renewed premium for {days} days")
         else:
-            # Belum pernah premium
             cursor.execute("""
                 UPDATE users 
                 SET premium = 1, 
