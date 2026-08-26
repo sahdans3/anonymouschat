@@ -42,17 +42,7 @@ from app.database import (
     connect_db
 )
 from app.keyboards import feedback_keyboard, premium_keyboard, gender_keyboard
-
-PARTNER_FOUND_MESSAGE = (
-    "Partner found 😺\n\n"
-    "/next — find a new partner\n"
-    "/stop — stop this chat\n\n"
-    "https://t.me/Annonymous_Chat_Bot"
-)
-
-FREE_USER_LIMIT = 6
-COOLDOWN_HOURS = 19
-ADMIN_ID = 6348859633
+from app.config import PARTNER_FOUND_MESSAGE, FREE_USER_LIMIT, COOLDOWN_HOURS, ADMIN_ID
 
 # ================= SEND CHAT REPORT =================
 
@@ -74,7 +64,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
                 f"💬 How was your chat?"
             )
             
-            # Kirim ke user1
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -88,7 +77,6 @@ async def send_chat_report_to_user(context, user_id, partner_id):
             except Exception as e:
                 print(f"❌ Send report to user1 error: {e}")
             
-            # Kirim ke user2 (partner)
             try:
                 await context.bot.send_message(
                     chat_id=partner_id,
@@ -260,7 +248,6 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= PREMIUM PAYMENT HANDLERS =================
 
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Konfirmasi sebelum pembayaran Telegram Stars"""
     query = update.pre_checkout_query
     
     try:
@@ -277,7 +264,6 @@ async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Aktifkan premium setelah pembayaran berhasil"""
     user_id = update.effective_user.id
     payment = update.message.successful_payment
     payload = payment.payload
@@ -862,21 +848,33 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increment_partner_count(user_id)
         increment_partner_count(partner)
         
+        # 🔥 LOGGING DETAIL
+        print(f"📌 MATCH FOUND: {user_id} <-> {partner}")
+        print(f"📌 PARTNER_FOUND_MESSAGE: {PARTNER_FOUND_MESSAGE[:50]}...")
+        
         # Kirim ke user1
         try:
             await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+            print(f"✅ Message sent to {user_id}")
         except Forbidden:
             print(f"⚠️ User {user_id} blocked the bot")
             remove_user(user_id)
+            return
+        except Exception as e:
+            print(f"❌ Error sending to {user_id}: {type(e).__name__}: {e}")
             return
         
         # Kirim ke partner
         try:
             await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+            print(f"✅ Message sent to {partner}")
         except Forbidden:
             print(f"⚠️ User {partner} blocked the bot")
             remove_user(partner)
             await update.message.reply_text("❌ Partner blocked the bot. Please try again.")
+            return
+        except Exception as e:
+            print(f"❌ Error sending to {partner}: {type(e).__name__}: {e}")
             return
     else:
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
@@ -935,8 +933,15 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increment_partner_count(user_id)
         increment_partner_count(partner)
         
-        await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
-        await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+        # 🔥 LOGGING DETAIL
+        print(f"📌 NEXT CHAT MATCH: {user_id} <-> {partner}")
+        
+        try:
+            await context.bot.send_message(chat_id=user_id, text=PARTNER_FOUND_MESSAGE)
+            await context.bot.send_message(chat_id=partner, text=PARTNER_FOUND_MESSAGE)
+            print(f"✅ Messages sent to {user_id} and {partner}")
+        except Exception as e:
+            print(f"❌ Error sending: {type(e).__name__}: {e}")
     else:
         waiting_msg = await update.message.reply_text("🔍 Waiting for another user...")
         save_waiting_message(user_id, waiting_msg.chat_id, waiting_msg.message_id)
@@ -986,12 +991,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
-    # Handle gender callback
     if data.startswith("gender_"):
         await gender_callback(update, context)
         return
     
-    # Handle referral copy
     if data == "copy_referral":
         code = get_referral_code(user_id)
         if code:
@@ -1033,7 +1036,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle premium
     if data.startswith('premium_'):
         if data == 'premium_help':
             await query.edit_message_text(
@@ -1071,7 +1073,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle feedback
     partner_id = get_partner(user_id)
     if partner_id:
         try:

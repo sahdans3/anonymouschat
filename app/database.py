@@ -488,7 +488,6 @@ def join_queue(user_id):
         result = cursor.fetchone()
         gender = result[0] if result else None
         preferred_gender = result[1] if result else None
-        # 🔥 FIX: Convert ke BOOLEAN (True/False) bukan INTEGER (0/1)
         is_premium = True if result and result[2] == 1 else False
         
         cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
@@ -765,7 +764,6 @@ def check_premium(user_id):
         return_connection(db)
 
 def set_premium(user_id, days=30):
-    """Set user as premium - ADD days to existing premium"""
     if not DATABASE_URL:
         return False
     db = connect_db()

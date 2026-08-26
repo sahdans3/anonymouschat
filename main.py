@@ -10,6 +10,7 @@ from flask import Flask
 from threading import Thread
 import os
 import time
+import logging
 
 from app.config import BOT_TOKEN
 from app.database import init_db, start_keep_alive
@@ -35,6 +36,9 @@ from app.handlers import (
     cek_premium,
     report_bug
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 flask_app = Flask(__name__)
 
@@ -79,7 +83,6 @@ def run_bot():
     app.add_handler(CommandHandler("cekpremium", cek_premium))
     app.add_handler(CommandHandler("report_bug", report_bug))
 
-    # 🔥 PAYMENT HANDLERS - PASTIKAN TERDAFTAR!
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
@@ -104,6 +107,7 @@ def run_bot():
     app.add_error_handler(error_handler)
 
     print("🤖 Bot sedang berjalan...")
+    logger.info("🤖 Bot started successfully!")
     app.run_polling()
 
 if __name__ == "__main__":
