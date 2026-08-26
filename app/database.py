@@ -286,88 +286,7 @@ def init_db():
     except Exception as e:
         logger.warning(f"   ⚠️ idx_purchase_log_user_id: {e}")
     
-    # ============ AUTO-MATCH TRIGGER ============
-    logger.info("📌 Creating auto-match trigger...")
-    
-    try:
-        cursor.execute("DROP TRIGGER IF EXISTS after_insert_waiting_queue ON waiting_queue")
-        
-        cursor.execute("""
-            CREATE OR REPLACE FUNCTION auto_match_users()
-            RETURNS TABLE(user1_id BIGINT, user2_id BIGINT) AS $$
-            DECLARE
-                v_user1 BIGINT;
-                v_user2 BIGINT;
-            BEGIN
-                SELECT user_id INTO v_user1
-                FROM waiting_queue
-                ORDER BY created_at ASC, id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED;
-                
-                IF v_user1 IS NULL THEN
-                    RETURN;
-                END IF;
-                
-                SELECT user_id INTO v_user2
-                FROM waiting_queue
-                WHERE user_id <> v_user1
-                ORDER BY created_at ASC, id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED;
-                
-                IF v_user2 IS NULL THEN
-                    RETURN;
-                END IF;
-                
-                IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user1 AND partner_id IS NOT NULL) THEN
-                    DELETE FROM waiting_queue WHERE user_id = v_user1;
-                    RETURN;
-                END IF;
-                
-                IF EXISTS (SELECT 1 FROM users WHERE user_id = v_user2 AND partner_id IS NOT NULL) THEN
-                    DELETE FROM waiting_queue WHERE user_id = v_user2;
-                    RETURN;
-                END IF;
-                
-                UPDATE users SET partner_id = v_user2, searching = 0 WHERE user_id = v_user1;
-                UPDATE users SET partner_id = v_user1, searching = 0 WHERE user_id = v_user2;
-                DELETE FROM waiting_queue WHERE user_id IN (v_user1, v_user2);
-                
-                INSERT INTO chat_history(user1, user2, start_time)
-                VALUES (v_user1, v_user2, CURRENT_TIMESTAMP);
-                
-                user1_id := v_user1;
-                user2_id := v_user2;
-                RETURN NEXT;
-                
-            EXCEPTION WHEN OTHERS THEN
-                RAISE NOTICE 'Error: %', SQLERRM;
-                RETURN;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-        
-        cursor.execute("""
-            CREATE OR REPLACE FUNCTION trigger_auto_match()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                PERFORM auto_match_users();
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-        
-        cursor.execute("""
-            CREATE TRIGGER after_insert_waiting_queue
-            AFTER INSERT ON waiting_queue
-            FOR EACH ROW
-            EXECUTE FUNCTION trigger_auto_match()
-        """)
-        
-        logger.info("   ✅ Auto-match trigger created")
-    except Exception as e:
-        logger.warning(f"   ⚠️ Trigger error: {e}")
+    # ============ AUTO-MATCH TRIGGER ===========
     
     db.commit()
     cursor.close()
@@ -507,6 +426,7 @@ def join_queue(user_id):
         
         db.commit()
         logger.info(f"✅ User {user_id} joined queue (premium: {is_premium}, gender: {gender})")
+        logger.info(f"🟡 QUEUE ADD: user={user_id}, gender={gender}, premium={is_premium}")
     except Exception as e:
         logger.error(f"❌ Join queue error: {e}")
         db.rollback()
@@ -534,25 +454,44 @@ def leave_queue(user_id):
 def find_partner(user_id):
     if not DATABASE_URL:
         return None
-    
+
     db = connect_db()
     if not db:
         return None
-    
+
     cursor = db.cursor()
-    
+
     try:
-        # Cek apakah user sudah punya partner
-        cursor.execute("SELECT partner_id FROM users WHERE user_id=%s AND partner_id IS NOT NULL", (user_id,))
-        if cursor.fetchone():
+        # Pastikan user belum punya partner
+        cursor.execute("""
+            SELECT partner_id
+            FROM users
+            WHERE user_id = %s
+        """, (user_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
             return None
-        
-        # Cek apakah user ada di waiting_queue
-        cursor.execute("SELECT user_id FROM waiting_queue WHERE user_id=%s", (user_id,))
+
+        if row[0] is not None:
+            logger.info(f"🔎 User {user_id} already has partner: {row[0]}")
+            return None
+
+        # Pastikan user sedang waiting
+        cursor.execute("""
+            SELECT user_id
+            FROM waiting_queue
+            WHERE user_id = %s
+        """, (user_id,))
+
         if not cursor.fetchone():
+            logger.info(f"🔎 User {user_id} not in waiting_queue")
             return None
-        
-        # 🔥 CARI PARTNER (tanpa trigger)
+
+        logger.info(f"🔎 FIND PARTNER: user={user_id}")
+
+        # Cari user lain yang sedang waiting
         cursor.execute("""
             SELECT user_id
             FROM waiting_queue
@@ -561,43 +500,77 @@ def find_partner(user_id):
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         """, (user_id,))
-        
-        partner = cursor.fetchone()
-        
-        if not partner:
+
+        row = cursor.fetchone()
+
+        if not row:
+            logger.info(f"🔎 No partner found for {user_id}")
             return None
-        
-        partner_id = partner[0]
-        
-        # Cek apakah partner sudah punya partner
-        cursor.execute("SELECT partner_id FROM users WHERE user_id=%s AND partner_id IS NOT NULL", (partner_id,))
-        if cursor.fetchone():
-            cursor.execute("DELETE FROM waiting_queue WHERE user_id=%s", (partner_id,))
+
+        partner_id = row[0]
+        logger.info(f"🔎 CANDIDATE: {partner_id}")
+
+        # Pastikan partner belum punya pasangan
+        cursor.execute("""
+            SELECT partner_id
+            FROM users
+            WHERE user_id = %s
+        """, (partner_id,))
+
+        partner_row = cursor.fetchone()
+
+        if not partner_row:
+            return None
+
+        if partner_row[0] is not None:
+            logger.info(f"🔎 Partner {partner_id} already has partner: {partner_row[0]}")
+            cursor.execute("""
+                DELETE FROM waiting_queue
+                WHERE user_id = %s
+            """, (partner_id,))
+
             db.commit()
             return None
-        
-        # 🔥 MATCH!
-        cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (partner_id, user_id))
-        cursor.execute("UPDATE users SET partner_id=%s, searching=0 WHERE user_id=%s", (user_id, partner_id))
-        cursor.execute("DELETE FROM waiting_queue WHERE user_id IN (%s, %s)", (user_id, partner_id))
-        
-        # Catat di chat_history
+
+        # =========================
+        # MATCH!
+        # =========================
+
+        cursor.execute("""
+            UPDATE users
+            SET partner_id = %s,
+                searching = 0
+            WHERE user_id = %s
+        """, (partner_id, user_id))
+
+        cursor.execute("""
+            UPDATE users
+            SET partner_id = %s,
+                searching = 0
+            WHERE user_id = %s
+        """, (user_id, partner_id))
+
+        cursor.execute("""
+            DELETE FROM waiting_queue
+            WHERE user_id IN (%s, %s)
+        """, (user_id, partner_id))
+
         cursor.execute("""
             INSERT INTO chat_history(user1, user2, start_time)
             VALUES (%s, %s, CURRENT_TIMESTAMP)
         """, (user_id, partner_id))
-        
+
         db.commit()
-        logger.info(f"⚡ MATCH: {user_id} <-> {partner_id}")
+
+        logger.info(f"⚡ MATCH FOUND: {user_id} <-> {partner_id}")
+
         return partner_id
-        
+
     except Exception as e:
-        logger.error(f"❌ Find partner error: {e}")
-        try:
-            db.rollback()
-        except:
-            pass
+        logger.error(f"❌ find_partner error for {user_id}: {e}")
+        db.rollback()
         return None
+
     finally:
         cursor.close()
         return_connection(db)
