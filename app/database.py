@@ -269,30 +269,6 @@ def init_db():
         logger.warning(f"   ⚠️ idx_users_is_banned: {e}")
     
     try:
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_premium ON users(premium)")
-        logger.info("   ✅ idx_users_premium")
-    except Exception as e:
-        logger.warning(f"   ⚠️ idx_users_premium: {e}")
-    
-    try:
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_waiting_queue_created_at ON waiting_queue(created_at)")
-        logger.info("   ✅ idx_waiting_queue_created_at")
-    except Exception as e:
-        logger.warning(f"   ⚠️ idx_waiting_queue_created_at: {e}")
-    
-    try:
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user1 ON chat_history(user1)")
-        logger.info("   ✅ idx_chat_history_user1")
-    except Exception as e:
-        logger.warning(f"   ⚠️ idx_chat_history_user1: {e}")
-    
-    try:
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user2 ON chat_history(user2)")
-        logger.info("   ✅ idx_chat_history_user2")
-    except Exception as e:
-        logger.warning(f"   ⚠️ idx_chat_history_user2: {e}")
-    
-    try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_user_id ON purchase(user_id)")
         logger.info("   ✅ idx_purchase_user_id")
     except Exception as e:
@@ -789,31 +765,18 @@ def check_premium(user_id):
         return_connection(db)
 
 def set_premium(user_id, days=30):
-    """Set user as premium - FIXED VERSION"""
+    """Set user as premium - ADD days to existing premium"""
     if not DATABASE_URL:
-        logger.error("❌ DATABASE_URL not set")
         return False
-    
     db = connect_db()
     if not db:
-        logger.error(f"❌ Cannot connect to database for user {user_id}")
         return False
-    
     cursor = db.cursor()
     try:
-        # 🔥 CEK APAKAH USER ADA, JIKA TIDAK, REGISTER DULU
-        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if not cursor.fetchone():
-            logger.info(f"📌 User {user_id} not found, registering first...")
-            cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
-            db.commit()
-        
-        # 🔥 CEK PREMIUM EXISTING
-        cursor.execute("SELECT premium_expiry FROM users WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT premium_expiry FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
         current_expiry = result[0] if result else None
         
-        # 🔥 HITUNG EXPIRY BARU
         if current_expiry:
             cursor.execute("SELECT CURRENT_TIMESTAMP <= %s", (current_expiry,))
             is_valid = cursor.fetchone()[0]
@@ -850,15 +813,12 @@ def set_premium(user_id, days=30):
         
         db.commit()
         
-        # 🔥 VERIFIKASI
-        cursor.execute("SELECT premium FROM users WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT premium FROM users WHERE user_id=%s", (user_id,))
         result = cursor.fetchone()
-        success = result and result[0] == 1
-        logger.info(f"📌 Premium verification for {user_id}: {'✅ SUCCESS' if success else '❌ FAILED'}")
-        return success
+        return result and result[0] == 1
         
     except Exception as e:
-        logger.error(f"❌ Set premium error for {user_id}: {e}")
+        logger.error(f"❌ Set premium error: {e}")
         db.rollback()
         return False
     finally:
