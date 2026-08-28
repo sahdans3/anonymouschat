@@ -39,7 +39,6 @@ def get_db_pool():
     return db_pool
 
 def connect_db():
-    """Safe database connection with error handling"""
     if not DATABASE_URL:
         logger.error("❌ DATABASE_URL is empty or not set!")
         return None
@@ -56,11 +55,11 @@ def connect_db():
                     return conn
             except psycopg2.pool.PoolError:
                 logger.warning("⚠️ Pool exhausted, creating direct connection")
-                conn = psycopg2.connect(DATABASE_URL)
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
                 return conn
         else:
             logger.info("📌 Creating direct connection to database...")
-            conn = psycopg2.connect(DATABASE_URL)
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
             return conn
     except Exception as e:
         logger.error(f"❌ Database connection error: {e}")
@@ -71,9 +70,19 @@ def return_connection(conn):
         try:
             pool = get_db_pool()
             if pool:
-                pool.putconn(conn)
+                try:
+                    pool.putconn(conn)
+                except Exception as e:
+                    logger.warning(f"⚠️ Error putting connection back to pool: {e}")
+                    try:
+                        conn.close()
+                    except:
+                        pass
             else:
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
         except Exception as e:
             logger.error(f"⚠️ Error returning connection: {e}")
             try:
@@ -459,9 +468,10 @@ def find_partner(user_id):
     if not db:
         return None
 
-    cursor = db.cursor()
-
+    cursor = None
     try:
+        cursor = db.cursor()
+        
         # Pastikan user belum punya partner
         cursor.execute("""
             SELECT partner_id
@@ -528,7 +538,6 @@ def find_partner(user_id):
                 DELETE FROM waiting_queue
                 WHERE user_id = %s
             """, (partner_id,))
-
             db.commit()
             return None
 
@@ -563,17 +572,28 @@ def find_partner(user_id):
         db.commit()
 
         logger.info(f"⚡ MATCH FOUND: {user_id} <-> {partner_id}")
-
         return partner_id
 
     except Exception as e:
         logger.error(f"❌ find_partner error for {user_id}: {e}")
-        db.rollback()
+        try:
+            db.rollback()
+        except:
+            pass
         return None
 
     finally:
-        cursor.close()
-        return_connection(db)
+        # 🔥 PASTIKAN CURSOR DAN KONEKSI DITUTUP!
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if db:
+            try:
+                return_connection(db)
+            except Exception as e:
+                logger.warning(f"⚠️ Error returning connection: {e}")
 
 def stop_chat(user_id):
     if not DATABASE_URL:
